@@ -21,9 +21,11 @@ from ..config import Settings
 from ..db.models import EngineeringTask, Project
 from ..db.session import SessionFactory, transaction
 from ..domain.projects import ProjectConfiguration
+from ..domain.requirements import ApprovedRequirements, RequirementsDocument, content_sha256
 from ..domain.runs import ApprovalStatus, JobStatus, RunEventType, RunState
 from ..llm.base import ModelProvider
 from ..repositories import projects as projects_repo
+from ..repositories import requirements as requirements_repo
 from ..repositories import runs as repo
 from ..services import Clock, utcnow
 from ..services.runs import transition
@@ -37,6 +39,7 @@ class JobSnapshot:
     run_id: uuid.UUID
     payload: dict
     deliveries: int
+    kind: str = "plan"
 
 
 class LeaseState:
@@ -55,6 +58,22 @@ class LeaseState:
 
 class _LostLease(Exception):
     pass
+
+
+class PinnedRequirementsError(Exception):
+    """The run's pinned requirements are missing, unapproved, or do not match their hash."""
+
+
+def load_pinned_requirements(session, version_id: uuid.UUID) -> ApprovedRequirements:
+    version = requirements_repo.get_version_by_id(session, version_id)
+    if version is None or version.approved_at is None:
+        raise PinnedRequirementsError("The pinned requirements version is missing or not approved.")
+    document = RequirementsDocument.model_validate(version.content)
+    if content_sha256(document) != version.content_sha256:
+        raise PinnedRequirementsError("The pinned requirements version does not match its recorded hash.")
+    return ApprovedRequirements(
+        version_id=str(version.id), version=version.version, content_sha256=version.content_sha256, document=document
+    )
 
 
 class PlanningJobHandler:
@@ -158,11 +177,21 @@ class PlanningJobHandler:
                 return None
             notes = [note.content for note in projects_repo.list_notes(session, project.id)]
             previous = repo.get_plan_version(session, run.id, version - 1) if version > 1 else None
+            approved = None
+            if run.pinned_requirements_version_id is not None:
+                try:
+                    approved = load_pinned_requirements(session, run.pinned_requirements_version_id)
+                except PinnedRequirementsError as error:
+                    run.failure_code, run.failure_message = "requirements-integrity", str(error)
+                    transition(session, run, RunState.FAILED, now, {"failure_code": "requirements-integrity"})
+                    repo.finish_job_if_owner(session, job.id, owner, JobStatus.FAILED, now)
+                    return None
             return PlanningInput(
                 configuration=ProjectConfiguration.model_validate(project.configuration),
                 notes=notes,
                 previous_plan=previous.content if previous else None,
                 revision_comment=job.payload.get("revision_comment"),
+                approved_requirements=approved,
             )
 
     def _commit(self, job: JobSnapshot, owner: str, version: int, result, attempt_ids: dict[int, uuid.UUID]) -> str:

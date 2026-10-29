@@ -1,0 +1,84 @@
+{
+  "name": "unknown-critical-answer",
+  "description": "The user answered \"I don't know\" to a blocking privacy question. The analyst must not treat it as a fact: it either keeps the question open or records a low-confidence assumption with that question as its basis.",
+  "input": {
+    "configuration": {
+      "name": "Physio Book",
+      "description": "Appointment booking site for a single physiotherapy clinic. Patients book and cancel sessions; staff manage the calendar.",
+      "platform": "website",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": { "features": ["authentication", "database", "notifications"], "custom": "" }
+    },
+    "notes": [],
+    "previous": {
+      "schema_version": 1,
+      "context": {
+        "goal": "Let a clinic's patients book and cancel sessions online.", "scope": "Booking, cancellation, and staff calendar.",
+        "platform": "website", "deployment": "", "personas": [{ "name": "Patient", "description": "Books sessions." }, { "name": "Staff", "description": "Manages the calendar." }],
+        "tenancy": "single", "constraints": [], "integrations": [], "out_of_scope": []
+      },
+      "requirements": [
+        {
+          "id": "REQ-001", "statement": "Patients book and cancel sessions online.", "kind": "functional", "priority": "must",
+          "confidence": "high", "source": "brief", "evidence": ["brief:description"],
+          "acceptance_criteria": ["A patient books a free slot and cancels it; the slot becomes free again."], "tags": [], "status": "active", "deprecation_reason": ""
+        },
+        {
+          "id": "REQ-002", "statement": "Staff manage the clinic calendar.", "kind": "functional", "priority": "must",
+          "confidence": "high", "source": "brief", "evidence": ["brief:description"],
+          "acceptance_criteria": ["Staff block a time range and patients can no longer book it."], "tags": [], "status": "active", "deprecation_reason": ""
+        }
+      ],
+      "assumptions": [],
+      "open_questions": [],
+      "readiness": { "ready": false, "blockers": [] },
+      "decisions": []
+    },
+    "questions": [
+      {
+        "key": "DQ-001", "prompt": "How long must patient booking records be kept?", "kind": "single-choice",
+        "options": ["1 year", "7 years", "Until the patient deletes their account"], "blocking": true, "topic": "privacy",
+        "status": "answered", "unknown": true, "answer": null
+      },
+      {
+        "key": "DQ-002", "prompt": "Should patients receive appointment reminders?", "kind": "yes-no", "options": [],
+        "blocking": false, "topic": "scope", "status": "answered", "unknown": false, "answer": true
+      }
+    ],
+    "turn": 2,
+    "max_turns": 8
+  },
+  "candidate": {
+    "source": "hand-authored reference output (not model output)",
+    "output": {
+      "context": {
+        "goal": "Let a clinic's patients book and cancel sessions online.", "scope": "Booking, cancellation, reminders, and staff calendar.",
+        "platform": "website", "deployment": "", "personas": [{ "name": "Patient", "description": "Books sessions." }, { "name": "Staff", "description": "Manages the calendar." }],
+        "tenancy": "single", "constraints": [], "integrations": ["Email or SMS provider for reminders"], "out_of_scope": []
+      },
+      "operations": [
+        {
+          "op": "add", "id": "", "statement": "Patients receive a reminder before each booked session.", "kind": "functional",
+          "priority": "should", "confidence": "high", "source": "answer", "evidence": ["answer:DQ-002"],
+          "acceptance_criteria": ["A patient with a session tomorrow receives one reminder 24 hours before it."], "tags": [], "reason": ""
+        }
+      ],
+      "questions": [],
+      "withdraw_questions": [],
+      "assumptions": [
+        {
+          "statement": "Booking records are kept for 7 years until the clinic confirms its legal retention period; confirm before launch.",
+          "confidence": "low", "basis": ["DQ-001"]
+        }
+      ],
+      "readiness": { "ready": true, "blockers": [] },
+      "decisions": ["The retention period is unknown, so it is recorded as a low-confidence assumption to confirm, not as the user's answer."]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "max_questions": 5,
+    "unknown_handled": ["DQ-001"]
+  }
+}

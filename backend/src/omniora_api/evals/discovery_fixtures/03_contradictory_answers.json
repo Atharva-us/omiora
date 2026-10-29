@@ -1,0 +1,77 @@
+{
+  "name": "contradictory-answers",
+  "description": "The user answered yes to storing card numbers and yes to a hosted payment page that keeps card data off the servers. The analyst must raise the conflict as a blocking question, not pick a side or declare readiness.",
+  "input": {
+    "configuration": {
+      "name": "Maker Market",
+      "description": "A storefront for handmade goods with a cart and checkout.",
+      "platform": "website",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": { "features": ["payments"], "custom": "" }
+    },
+    "notes": [],
+    "previous": {
+      "schema_version": 1,
+      "context": {
+        "goal": "Let makers sell handmade goods online.", "scope": "Storefront, cart, and checkout.", "platform": "website",
+        "deployment": "", "personas": [{ "name": "Shopper", "description": "Buys handmade goods." }], "tenancy": "single",
+        "constraints": [], "integrations": [], "out_of_scope": []
+      },
+      "requirements": [
+        {
+          "id": "REQ-001", "statement": "Shoppers can add products to a cart and pay at checkout.", "kind": "functional",
+          "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:description", "brief:features"],
+          "acceptance_criteria": ["A shopper completes a test purchase."], "tags": ["billing"], "status": "active", "deprecation_reason": ""
+        }
+      ],
+      "assumptions": [],
+      "open_questions": [],
+      "readiness": { "ready": false, "blockers": [] },
+      "decisions": []
+    },
+    "questions": [
+      {
+        "key": "DQ-001", "prompt": "Will the shop store customers' card numbers itself?", "kind": "yes-no", "options": [],
+        "blocking": true, "topic": "security", "status": "answered", "unknown": false, "answer": true
+      },
+      {
+        "key": "DQ-002", "prompt": "Must checkout use a hosted payment page so card data never touches your servers?", "kind": "yes-no",
+        "options": [], "blocking": true, "topic": "security", "status": "answered", "unknown": false, "answer": true
+      }
+    ],
+    "turn": 2,
+    "max_turns": 8
+  },
+  "candidate": {
+    "source": "hand-authored reference output (not model output)",
+    "output": {
+      "context": {
+        "goal": "Let makers sell handmade goods online.", "scope": "Storefront, cart, and checkout.", "platform": "website",
+        "deployment": "", "personas": [{ "name": "Shopper", "description": "Buys handmade goods." }], "tenancy": "single",
+        "constraints": [], "integrations": ["Payment provider"], "out_of_scope": []
+      },
+      "operations": [],
+      "questions": [
+        {
+          "prompt": "Your answers conflict: storing card numbers yourself puts your servers in full PCI DSS scope, while a hosted payment page keeps card data off them. Which should the shop do?",
+          "why": "This decides the payment architecture and the security obligations.",
+          "kind": "single-choice",
+          "options": ["Use a hosted payment page and never store card numbers", "Store card numbers ourselves and take on full PCI DSS compliance"],
+          "blocking": true, "topic": "security", "relates_to": ["REQ-001"]
+        }
+      ],
+      "withdraw_questions": [],
+      "assumptions": [],
+      "readiness": { "ready": false, "blockers": ["The answers to DQ-001 and DQ-002 conflict."] },
+      "decisions": ["Raised the conflict between DQ-001 and DQ-002 instead of choosing one side."]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "ready": false,
+    "max_questions": 5,
+    "min_blocking_questions": 1,
+    "blocking_question_topics": ["security", "data", "scope", "privacy"]
+  }
+}

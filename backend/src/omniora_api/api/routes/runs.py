@@ -12,7 +12,7 @@ from ...domain.runs import TERMINAL_STATES, RunState
 from ...errors import ApiError
 from ..deps import Container, current_user, get_container
 from ..mappers import approval_out, event_out, run_detail_out, run_out
-from ..schemas import ApprovalOut, DecisionIn, RunDetailOut, RunEventOut, RunOut
+from ..schemas import ApprovalOut, DecisionIn, RunDetailOut, RunEventOut, RunOut, StartRunIn
 
 router = APIRouter(tags=["runs"])
 
@@ -21,11 +21,13 @@ router = APIRouter(tags=["runs"])
 def start_run(
     project_id: str,
     response: Response,
+    body: StartRunIn | None = None,
     idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=100),
     user=Depends(current_user),
     container: Container = Depends(get_container),
 ) -> RunOut:
-    run, created = container.runs.start(user.id, project_id, idempotency_key)
+    without_requirements = body.without_requirements if body else False
+    run, created = container.runs.start(user.id, project_id, idempotency_key, without_requirements=without_requirements)
     if not created:
         response.status_code = 200
     return run_out(run)

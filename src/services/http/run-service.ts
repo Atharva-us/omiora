@@ -34,9 +34,10 @@ export function createHttpRunService(http: HttpClient, createEventSource: EventS
     listRuns: (projectId) =>
       http.request('GET', `/api/v1/projects/${encodeURIComponent(projectId)}/runs`, { schema: z.array(runSchema) }),
     getRun: (runId) => http.request('GET', runPath(runId), { schema: runDetailSchema }),
-    startPlanning: (projectId, idempotencyKey) =>
+    startPlanning: (projectId, idempotencyKey, options) =>
       http.request('POST', `/api/v1/projects/${encodeURIComponent(projectId)}/runs`, {
         headers: { 'Idempotency-Key': idempotencyKey },
+        ...(options?.withoutRequirements ? { body: { withoutRequirements: true } } : {}),
         schema: runSchema,
       }),
     cancel: (runId) => http.request('POST', `${runPath(runId)}/cancel`, { schema: runSchema }),

@@ -2,7 +2,8 @@
 
 Status: the frontend runs in **demo mode** (browser storage, no backend) or **API mode** (the FastAPI backend in
 `backend/`, documented in [BACKEND.md](BACKEND.md)). API mode provides accounts, project persistence, and Agent 1
-(Project Manager) planning with human approval. Agents 2–10, code generation, and execution do not exist yet. This
+(Project Manager) planning and Agent 2 (Requirements Analyst) discovery, each with human approval. Agents 3–10, code
+generation, and execution do not exist yet. This
 document describes the frontend structure in `src/` and the boundaries the backend plugs into. Findings that motivated the structure are in
 [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md); contributor rules are in
 [ENGINEERING_STANDARDS.md](ENGINEERING_STANDARDS.md); the HTTP API draft is in
@@ -193,9 +194,21 @@ belongs in React components.
 5. Model routing behind a backend interface, with keys held only server-side.
 6. An approval-gate mechanism, because Agent 1's plan must be approved before any later agent runs.
 
-All six exist (see [BACKEND.md](BACKEND.md)). Still missing before Agents 2–10: tool permissions and an audited
+All six exist (see [BACKEND.md](BACKEND.md)). Still missing before Agents 3–10: tool permissions and an audited
 tool-call layer, sandboxed execution, artifact storage, task-level orchestration that consumes approved plans,
 and per-agent evaluation suites.
+
+### Agent 2: Requirements Analyst (delivered in Phase 3)
+
+The frontend side is thin. `RequirementsService` (`services/contracts/requirements-service.ts`) has an HTTP
+adapter and an unavailable adapter for demo mode, which simulates nothing. Zod schemas in
+`domain/requirements/requirements.ts` parse every response. The workspace **Requirements** tab
+(`features/workspace/requirements/`) renders questions, answers, versions, and approval. It subscribes to the
+session's events through `RunService.subscribe`, because a session id is a run id, and re-fetches the session
+after each event. The analysing indicator appears only while the server reports a queued or running turn. Answer
+drafts restart from the server's recorded answers whenever those change, so a refresh resumes exactly. Retried
+submissions reuse their idempotency key. The Plan tab starts planning from the approved version, or through a
+separate, labelled "Plan without requirements" path.
 
 Agent 1 needs no sandbox (it plans and writes no code). Sandboxed execution must exist before the Frontend,
 Backend, Mobile, Database, or QA agents run anything.

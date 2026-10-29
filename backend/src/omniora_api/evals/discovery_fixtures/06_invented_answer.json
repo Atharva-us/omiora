@@ -1,0 +1,49 @@
+{
+  "name": "invented-answer",
+  "description": "Validator fixture: the output attributes a requirement to an answer the user never gave and claims readiness while a blocking question is open. It must be rejected.",
+  "input": {
+    "configuration": {
+      "name": "Maker Market",
+      "description": "A storefront for handmade goods with a cart and checkout.",
+      "platform": "website",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": { "features": ["payments"], "custom": "" }
+    },
+    "notes": [],
+    "previous": null,
+    "questions": [
+      {
+        "key": "DQ-001", "prompt": "Which payment methods must checkout accept?", "kind": "multiple-choice",
+        "options": ["Cards", "PayPal"], "blocking": true, "topic": "scope", "status": "open", "unknown": false, "answer": null
+      }
+    ],
+    "turn": 2,
+    "max_turns": 8
+  },
+  "candidate": {
+    "source": "hand-authored invalid output (not model output)",
+    "output": {
+      "context": {
+        "goal": "Let makers sell handmade goods online.", "scope": "", "platform": "website", "deployment": "",
+        "personas": [], "tenancy": "single", "constraints": [], "integrations": [], "out_of_scope": []
+      },
+      "operations": [
+        {
+          "op": "add", "id": "", "statement": "Checkout accepts PayPal.", "kind": "functional", "priority": "must",
+          "confidence": "high", "source": "answer", "evidence": ["answer:DQ-001"],
+          "acceptance_criteria": ["A PayPal test payment succeeds."], "tags": [], "reason": ""
+        }
+      ],
+      "questions": [],
+      "withdraw_questions": [],
+      "assumptions": [],
+      "readiness": { "ready": true, "blockers": [] },
+      "decisions": []
+    }
+  },
+  "expect": {
+    "valid": false,
+    "problem_substrings": ["no answer to DQ-001 has been submitted", "do not attribute it to the user"]
+  }
+}

@@ -91,9 +91,9 @@ CSRF header plus Origin check.
 
 | Method | Path                         | Notes                                              |
 | ------ | ---------------------------- | -------------------------------------------------- |
-| POST   | `/projects/{id}/runs`        | Header `Idempotency-Key` (8–100 chars, required) → `202 Run`; the same key again → `200` with the same run. `409 conflict` if a run is already active; `503 provider-not-configured`; `429 rate-limited`; `403 read-only` for samples. |
-| GET    | `/projects/{id}/runs`        | → `Run[]` (newest first)                           |
-| GET    | `/runs/{runId}`              | → `RunDetail { run, plan, tasks, approvals, attempts }` |
+| POST   | `/projects/{id}/runs`        | Header `Idempotency-Key` (8–100 chars, required); optional body `{ withoutRequirements: true }` → `202 Run`; the same key again → `200` with the same run. The run is pinned to the project's latest approved requirements (`pinnedRequirementsVersionId`). With no approved requirements and no `withoutRequirements`, `409 conflict`; the explicit skip is recorded (`requirementsSkipped: true`). `409 conflict` also if a run or requirements session is already active; `503 provider-not-configured`; `429 rate-limited`; `403 read-only` for samples. |
+| GET    | `/projects/{id}/runs`        | → `Run[]` (planning runs only, newest first)       |
+| GET    | `/runs/{runId}`              | → `RunDetail { run, plan, tasks, approvals, attempts, requirements }`; `requirements` is the pinned version `{ versionId, sessionId, version, contentSha256 }` or null. `plan.content.flaggedRequirements` lists approved must-haves left uncovered, with reasons. |
 | POST   | `/runs/{runId}/cancel`       | → `Run`. Allowed from `queued`, `planning`, or `awaiting-approval`; idempotent once cancelled; `409` from other terminal states. |
 | GET    | `/runs/{runId}/events`       | SSE. `id` = per-run sequence number; resumes after `Last-Event-ID` (or `?after=`); `event: end` after a terminal state; heartbeats; closes after 5 minutes (clients reconnect). |
 | GET    | `/runs/{runId}/events/history?after=` | → `RunEvent[]` as JSON (same data, for reconciliation) |
@@ -109,6 +109,29 @@ its state is `awaiting-approval`. Events are append-only, and each carries a mon
 UI can resume a dropped stream. Model routing (`ModelRoutingService`) is internal to the backend. Provider API
 keys stay server-side. See `docs/ARCHITECTURE.md` §8 for orchestration, retry, cancellation, and audit
 requirements.
+
+## 5.1 Requirements sessions (Agent 2)
+
+A session id is a run id: progress uses `GET /runs/{id}/events` and `/events/history` from §5. All writes need
+the CSRF header and Origin check; other users' sessions return `404`.
+
+| Method | Path | Notes |
+| ------ | ---- | ----- |
+| POST | `/projects/{id}/requirements-sessions` | Header `Idempotency-Key` → `202 RequirementsSession`; same key → `200`. `409` if a run or session is active; `503`; `429`; `403 read-only` for samples. |
+| GET | `/projects/{id}/requirements-sessions` | → `RequirementsSession[]` (newest first) |
+| GET | `/requirements-sessions/{id}` | → `SessionDetail { session, turn, maxTurns, questions (each with its current answer), version, approvals, attempts }` |
+| POST | `/requirements-sessions/{id}/answers` | Header `Idempotency-Key`; `{ answers: [{ questionKey, value?, unknown? }] (≤ 20), advance }` → `SessionDetail`. Values are validated per question kind (one offered option, a non-empty subset of options, a boolean, or 1–2000 characters); `unknown: true` takes no value. A replayed key applies nothing. `409` while a turn is queued or running, or (with `advance`) after a failed turn: retry it instead. |
+| POST | `/requirements-sessions/{id}/turns/retry` | → `SessionDetail`. Re-queues a failed turn; idempotent while it is queued or running. |
+| POST | `/requirements-sessions/{id}/submit` | `{ version }` → `SessionDetail`. Only from `ready-for-review` and only the latest version; freezes it and opens a `requirements` approval. Idempotent. |
+| POST | `/requirements-sessions/{id}/approvals/{approvalId}` | `{ decision: "approve" \| "request-changes", version, comment? }` → `SessionDetail`. `request-changes` needs a comment and queues a revision turn. Same decision twice → unchanged; stale version → `409`. |
+| POST | `/requirements-sessions/{id}/cancel` | → `SessionDetail`; idempotent. |
+| GET | `/requirements-sessions/{id}/versions` | → `VersionSummary[]` |
+| GET | `/requirements-sessions/{id}/versions/{n}?diff={m}` | → `RequirementsVersion` (content, hash, parent, freeze and approval stamps), with `diff { fromVersion, added, deprecated, changed[{id, fields}], contextFields }` when `diff` is given. |
+| GET | `/projects/{id}/requirements/approved` | → `{ sessionId, version }`, the latest approved version; `404` if none. |
+
+Session states: `queued → discovering ⇄ ready-for-review → awaiting-approval → approved`, with
+`awaiting-approval → needs-changes → discovering`, plus `cancelled` (and `failed`, reserved for terminal
+problems). A failed turn leaves the session in `discovering`. Approved versions are immutable.
 
 ## 6. Files
 

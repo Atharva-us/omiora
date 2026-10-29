@@ -1,12 +1,13 @@
-import { ClipboardCheck, Code2, FlaskConical, ListChecks, Monitor, ScrollText } from 'lucide-react';
+import { ClipboardCheck, Code2, FlaskConical, ListChecks, ListTodo, Monitor, ScrollText } from 'lucide-react';
 import type { TabItem } from '@/components/ui/Tabs';
 import { requirementLabel, technologyNames } from '@/domain/projects/catalog';
 import type { ProjectConfiguration } from '@/domain/projects/project';
 
-export type WorkspaceTab = 'preview' | 'plan' | 'code' | 'tasks' | 'tests' | 'logs';
+export type WorkspaceTab = 'preview' | 'requirements' | 'plan' | 'code' | 'tasks' | 'tests' | 'logs';
 
 export const WORKSPACE_TABS: readonly TabItem<WorkspaceTab>[] = [
   { id: 'preview', label: 'Preview', icon: Monitor },
+  { id: 'requirements', label: 'Requirements', icon: ListTodo },
   { id: 'plan', label: 'Plan', icon: ClipboardCheck },
   { id: 'code', label: 'Code', icon: Code2 },
   { id: 'tasks', label: 'Tasks', icon: ListChecks },

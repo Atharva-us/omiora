@@ -1,0 +1,97 @@
+{
+  "name": "clear-project",
+  "description": "A well-specified single-organisation brief. The analyst should capture its requirements with brief evidence, avoid unnecessary blocking questions, and may declare readiness.",
+  "input": {
+    "configuration": {
+      "name": "Hourly",
+      "description": "Internal timesheet web app for our 20-person design agency (one organisation). Employees log hours per client project each week, managers approve timesheets, and finance exports approved hours as CSV each month.",
+      "platform": "website",
+      "referenceUrl": "",
+      "stack": { "mode": "custom", "technologies": ["nextjs", "postgresql"] },
+      "requirements": {
+        "features": ["authentication", "database", "admin-dashboard"],
+        "custom": "Email and password accounts are enough; no single sign-on.\nHours are rounded to 15 minutes."
+      }
+    },
+    "notes": [],
+    "previous": null,
+    "questions": [],
+    "turn": 1,
+    "max_turns": 8
+  },
+  "candidate": {
+    "source": "hand-authored reference output (not model output)",
+    "output": {
+      "context": {
+        "goal": "Track agency staff hours per client project, approve them weekly, and export them monthly for finance.",
+        "scope": "Timesheet entry, manager approval, CSV export, and an admin dashboard for projects and users.",
+        "platform": "website",
+        "deployment": "Internal use by one agency.",
+        "personas": [
+          { "name": "Employee", "description": "Logs hours per client project each week." },
+          { "name": "Manager", "description": "Approves or returns timesheets." },
+          { "name": "Finance", "description": "Exports approved hours each month." }
+        ],
+        "tenancy": "single",
+        "constraints": ["Next.js and PostgreSQL", "Email and password accounts only"],
+        "integrations": [],
+        "out_of_scope": ["Single sign-on"]
+      },
+      "operations": [
+        {
+          "op": "add", "id": "", "statement": "Employees log hours per client project for each week.", "kind": "functional",
+          "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:description"],
+          "acceptance_criteria": ["An employee enters hours against two projects for a week and sees the weekly total."],
+          "tags": [], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Managers approve or return submitted timesheets.", "kind": "functional",
+          "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:description"],
+          "acceptance_criteria": ["A manager approves one timesheet and returns another with a comment; the employee sees both outcomes."],
+          "tags": [], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Finance exports approved hours for a month as CSV.", "kind": "functional",
+          "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:description"],
+          "acceptance_criteria": ["The export for a month contains exactly the approved entries, one row per employee, project, and day."],
+          "tags": ["data"], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Users sign in with email and password.", "kind": "functional",
+          "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:custom", "brief:features"],
+          "acceptance_criteria": ["A user signs in with email and password; wrong passwords are rejected."],
+          "tags": ["security"], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Logged hours are rounded to 15-minute increments.", "kind": "constraint",
+          "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:custom"],
+          "acceptance_criteria": ["An entry of 1 h 07 min is stored and shown as 1 h 00 min; 1 h 08 min becomes 1 h 15 min."],
+          "tags": [], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Administrators manage users, roles, and client projects in an admin dashboard.", "kind": "functional",
+          "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:features"],
+          "acceptance_criteria": ["An administrator adds a project and assigns a manager role to a user."],
+          "tags": ["security"], "reason": ""
+        }
+      ],
+      "questions": [
+        {
+          "prompt": "Should rounding go to the nearest 15 minutes or always up?", "why": "Changes billed totals slightly.",
+          "kind": "single-choice", "options": ["Nearest 15 minutes", "Always round up"], "blocking": false, "topic": "scope", "relates_to": []
+        }
+      ],
+      "withdraw_questions": [],
+      "assumptions": [{ "statement": "Rounding is to the nearest 15 minutes until confirmed.", "confidence": "medium", "basis": [] }],
+      "readiness": { "ready": true, "blockers": [] },
+      "decisions": ["The brief settles the core scope, so no blocking questions were needed."]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "ready": true,
+    "tenancy": "single",
+    "max_questions": 2,
+    "max_blocking_questions": 0
+  }
+}

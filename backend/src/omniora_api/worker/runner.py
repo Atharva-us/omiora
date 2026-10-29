@@ -5,6 +5,10 @@ SKIP LOCKED); the lease is renewed in the background while the job runs. If the 
 lease expires and another worker re-delivers the job. After `max_deliveries` deliveries the job
 and its run fail with `worker-exhausted` instead of looping forever. Model calls may therefore
 repeat after a crash, but results only commit under a valid lease (see planning.py).
+
+Jobs are dispatched by kind: `plan` (Project Manager) and `requirements-turn` (Requirements
+Analyst). An exhausted planning job fails its run; an exhausted discovery job fails only its turn,
+which keeps the user's answers and can be retried.
 """
 
 from __future__ import annotations
@@ -22,7 +26,9 @@ from ..db.session import SessionFactory, transaction
 from ..domain.runs import JobStatus, RunState
 from ..repositories import runs as repo
 from ..services import Clock, utcnow
+from ..services.requirements import DISCOVERY_JOB
 from ..services.runs import transition
+from .discovery import DiscoveryJobHandler, fail_turn
 from .planning import JobSnapshot, LeaseState, PlanningJobHandler
 
 logger = logging.getLogger("omniora.worker")
@@ -71,6 +77,7 @@ class Worker:
         factory: SessionFactory,
         planning: PlanningJobHandler,
         *,
+        discovery: DiscoveryJobHandler | None = None,
         owner: str | None = None,
         lease_seconds: int = 60,
         poll_seconds: float = 1.0,
@@ -78,6 +85,7 @@ class Worker:
     ) -> None:
         self._factory = factory
         self._planning = planning
+        self._discovery = discovery
         self.owner = owner or default_worker_id()
         self._lease_seconds = lease_seconds
         self._poll_seconds = poll_seconds
@@ -93,11 +101,22 @@ class Worker:
             if job.deliveries > job.max_deliveries:
                 job.status = JobStatus.FAILED
                 job.last_error = "Delivery limit reached; the worker repeatedly stopped before finishing."
-                self._fail_run(
-                    session, job.run_id, "worker-exhausted", "Planning was interrupted too many times. Start a new run."
-                )
+                if job.kind == DISCOVERY_JOB:
+                    message = "The analyst turn was interrupted too many times. Retry it; your answers are kept."
+                    fail_turn(
+                        session, job.run_id, int(job.payload["turn"]), "worker-exhausted", message, self.owner, now
+                    )
+                else:
+                    self._fail_run(
+                        session,
+                        job.run_id,
+                        "worker-exhausted",
+                        "Planning was interrupted too many times. Start a new run.",
+                    )
                 return None
-            return JobSnapshot(id=job.id, run_id=job.run_id, payload=dict(job.payload), deliveries=job.deliveries)
+            return JobSnapshot(
+                id=job.id, run_id=job.run_id, payload=dict(job.payload), deliveries=job.deliveries, kind=job.kind
+            )
 
     def _fail_run(self, session, run_id: uuid.UUID, code: str, message: str) -> None:
         run = repo.get_run(session, run_id, lock=True)
@@ -120,6 +139,10 @@ class Worker:
         keeper = LeaseKeeper(self._factory, job.id, self.owner, self._lease_seconds, lease, self._clock)
         keeper.start()
         try:
+            if job.kind == DISCOVERY_JOB:
+                if self._discovery is None:
+                    raise RuntimeError("This worker has no requirements-turn handler")
+                return self._discovery.handle(job, self.owner, lease)
             return self._planning.handle(job, self.owner, lease)
         except Exception as exc:
             logger.exception("job failed unexpectedly", extra={"job_id": str(job.id)})
@@ -136,7 +159,19 @@ class Worker:
             if job.deliveries >= current.max_deliveries:
                 current.status = JobStatus.FAILED
                 current.last_error = type(exc).__name__
-                self._fail_run(session, job.run_id, "worker-error", "Planning failed because of an internal error.")
+                if job.kind == DISCOVERY_JOB:
+                    message = "The analyst turn failed because of an internal error. Retry it; your answers are kept."
+                    fail_turn(
+                        session,
+                        job.run_id,
+                        int(job.payload["turn"]),
+                        "worker-error",
+                        message,
+                        self.owner,
+                        self._clock(),
+                    )
+                else:
+                    self._fail_run(session, job.run_id, "worker-error", "Planning failed because of an internal error.")
             else:
                 backoff = timedelta(seconds=min(2**job.deliveries, 60))
                 repo.release_job_for_retry(session, job.id, self.owner, self._clock() + backoff, type(exc).__name__)

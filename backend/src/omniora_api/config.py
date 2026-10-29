@@ -18,13 +18,30 @@ class PlanningDefaults:
     model: str
     effort: Effort
     max_output_tokens: int
+    # Requirements Analyst turns: output budget, and the most a single request (estimated prompt
+    # plus requested completion) may use. Turns whose prompt would exceed it fail honestly.
+    analyst_max_output_tokens: int
+    request_token_budget: int
 
 
 PROVIDER_DEFAULTS: dict[str, PlanningDefaults] = {
-    "anthropic": PlanningDefaults(model="claude-opus-5-5", effort="high", max_output_tokens=16000),
+    "anthropic": PlanningDefaults(
+        model="claude-opus-5-5",
+        effort="high",
+        max_output_tokens=16000,
+        analyst_max_output_tokens=8000,
+        request_token_budget=150_000,
+    ),
     # Groq Developer-tier gpt-oss-120b allows 8K tokens per minute including the requested
-    # completion budget, so the default leaves room for the prompt and schema.
-    "groq": PlanningDefaults(model="openai/gpt-oss-120b", effort="medium", max_output_tokens=6000),
+    # completion budget, so the defaults leave room for the prompt and schema. Hidden reasoning
+    # counts toward the completion budget: 3,000 analyst tokens truncated live outputs.
+    "groq": PlanningDefaults(
+        model="openai/gpt-oss-120b",
+        effort="medium",
+        max_output_tokens=6000,
+        analyst_max_output_tokens=5000,
+        request_token_budget=7600,
+    ),
 }
 
 
@@ -61,6 +78,12 @@ class Settings(BaseSettings):
     pm_effort: Effort | None = None
     pm_max_output_tokens: int | None = Field(default=None, ge=1024, le=64000)
     pm_max_attempts: int = Field(default=3, ge=1, le=5)
+    # Requirements Analyst (Agent 2). It uses the same provider and model as planning.
+    analyst_max_output_tokens: int | None = Field(default=None, ge=1024, le=64000)
+    analyst_request_token_budget: int | None = Field(default=None, ge=2048)
+    analyst_max_attempts: int = Field(default=3, ge=1, le=5)
+    analyst_max_turns: int = Field(default=8, ge=1, le=20)
+    analyst_turns_per_user_per_hour: int = Field(default=30, ge=1)
     model_timeout_seconds: float = Field(default=300.0, gt=0, le=1800)
     model_transport_retries: int = Field(default=2, ge=0, le=5)
 
@@ -128,6 +151,14 @@ class Settings(BaseSettings):
     @property
     def planning_max_output_tokens(self) -> int:
         return self.pm_max_output_tokens or PROVIDER_DEFAULTS[self.model_provider].max_output_tokens
+
+    @property
+    def analyst_output_tokens(self) -> int:
+        return self.analyst_max_output_tokens or PROVIDER_DEFAULTS[self.model_provider].analyst_max_output_tokens
+
+    @property
+    def analyst_token_budget(self) -> int:
+        return self.analyst_request_token_budget or PROVIDER_DEFAULTS[self.model_provider].request_token_budget
 
 
 @lru_cache

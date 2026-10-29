@@ -1,6 +1,10 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+
+// The workspace route is lazy-loaded; the first test in a file pays for compiling that chunk
+// under jsdom, which can exceed Testing Library's 1 s default for `findBy*`.
+configure({ asyncUtilTimeout: 5000 });
 
 afterEach(() => {
   cleanup();

@@ -1,0 +1,105 @@
+{
+  "name": "multi-tenant-saas",
+  "description": "Workspaces of different teams share one deployment. The output must set tenancy to multi and carry a mandatory tenant-isolation requirement whose criteria prove cross-workspace access is denied.",
+  "input": {
+    "configuration": {
+      "name": "Pulse Analytics",
+      "description": "SaaS analytics dashboard for small teams with workspaces, subscription billing, and a companion mobile app for alerts.",
+      "platform": "both",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": {
+        "features": ["authentication", "database", "payments", "admin-dashboard", "notifications", "automated-tests"],
+        "custom": "Workspace owners can invite members with viewer or editor roles."
+      }
+    },
+    "notes": [],
+    "previous": null,
+    "questions": [],
+    "turn": 1,
+    "max_turns": 8
+  },
+  "candidate": {
+    "source": "hand-authored reference output (not model output)",
+    "output": {
+      "context": {
+        "goal": "An analytics dashboard where small teams track their metrics in shared workspaces and receive mobile alerts.",
+        "scope": "Web dashboard, workspaces with roles, subscription billing, admin dashboard, and a mobile app for alerts.",
+        "platform": "both",
+        "deployment": "",
+        "personas": [
+          { "name": "Workspace owner", "description": "Creates a workspace, pays for it, and invites members." },
+          { "name": "Member", "description": "Views (viewer) or edits (editor) a workspace's dashboards." }
+        ],
+        "tenancy": "multi",
+        "constraints": [],
+        "integrations": ["Payment provider for subscriptions", "Push notification service"],
+        "out_of_scope": []
+      },
+      "operations": [
+        {
+          "op": "add", "id": "", "statement": "Users can sign up, sign in, and belong to one or more workspaces.",
+          "kind": "functional", "priority": "must", "confidence": "high", "source": "brief",
+          "evidence": ["brief:features", "brief:description"],
+          "acceptance_criteria": ["A new user can register, sign in, and see the workspaces they belong to."],
+          "tags": ["security"], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Workspace owners can invite members as viewers or editors; viewers cannot change anything.",
+          "kind": "functional", "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:custom"],
+          "acceptance_criteria": ["An invited viewer can open dashboards but every edit request is rejected."],
+          "tags": ["security"], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Each workspace has a paid subscription managed by its owner.",
+          "kind": "functional", "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:features", "brief:description"],
+          "acceptance_criteria": ["A test subscription activates a workspace, and cancelling it is reflected in the workspace."],
+          "tags": ["billing"], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Each workspace's data is visible and changeable only by that workspace's members.",
+          "kind": "non-functional", "priority": "must", "confidence": "medium", "source": "inferred", "evidence": [],
+          "acceptance_criteria": [
+            "A member of workspace A receives 404 for any dashboard, alert, or record of workspace B.",
+            "Automated tests attempt cross-workspace reads and writes and verify they are denied."
+          ],
+          "tags": ["tenant-isolation", "security", "privacy"], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Members receive metric alerts as push notifications in the mobile app.",
+          "kind": "functional", "priority": "should", "confidence": "high", "source": "brief", "evidence": ["brief:features", "brief:description"],
+          "acceptance_criteria": ["A triggered alert reaches a signed-in member's phone within one minute."],
+          "tags": [], "reason": ""
+        },
+        {
+          "op": "add", "id": "", "statement": "Core flows are covered by automated tests that run on every change.",
+          "kind": "non-functional", "priority": "must", "confidence": "high", "source": "brief", "evidence": ["brief:features"],
+          "acceptance_criteria": ["CI runs unit, integration, and end-to-end tests and blocks merging on failure."],
+          "tags": ["reliability"], "reason": ""
+        }
+      ],
+      "questions": [
+        {
+          "prompt": "Where does the analytics data come from?", "why": "Data sources decide the integrations, storage, and cost.",
+          "kind": "multiple-choice", "options": ["Manual CSV uploads", "Our own product's events via an API", "Third-party tools such as Stripe or Google Analytics"],
+          "blocking": true, "topic": "data", "relates_to": []
+        },
+        {
+          "prompt": "How are subscriptions priced?", "why": "Pricing tiers decide plan limits and billing logic.",
+          "kind": "single-choice", "options": ["One flat price per workspace", "Price per member", "Tiers with usage limits"],
+          "blocking": false, "topic": "cost", "relates_to": []
+        }
+      ],
+      "withdraw_questions": [],
+      "assumptions": [],
+      "readiness": { "ready": false, "blockers": ["The data sources are unknown."] },
+      "decisions": ["Workspaces of different teams share one deployment, so tenant isolation is a must-have."]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "tenancy": "multi",
+    "max_questions": 5,
+    "isolation_criteria_keywords": ["denied", "deny", "denies", "404", "403", "forbidden", "cannot", "rejected", "refused", "no access", "not visible", "not accessible"]
+  }
+}

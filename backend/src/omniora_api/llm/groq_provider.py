@@ -37,6 +37,23 @@ def _error_code(exc: groq.APIStatusError) -> str:
     return str(error.get("code") or error.get("type") or "") if isinstance(error, dict) else ""
 
 
+def _ran_out_of_tokens(exc: groq.APIStatusError) -> bool:
+    """Groq reports output cut off by `max_completion_tokens` as `json_validate_failed`. The message is
+    read only to classify the error; it is never passed on."""
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error", body)
+    message = str(error.get("message") or "") if isinstance(error, dict) else ""
+    return "max completion tokens" in message.lower()
+
+
+def _failed_generation(exc: groq.APIStatusError) -> str | None:
+    """The model output Groq rejected against the schema, kept so the agent can explain what was wrong."""
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error", body)
+    value = error.get("failed_generation") if isinstance(error, dict) else None
+    return value[:64_000] if isinstance(value, str) and value else None
+
+
 def _retry_after(exc: groq.APIStatusError) -> float | None:
     value = exc.response.headers.get("retry-after") if exc.response is not None else None
     try:
@@ -92,11 +109,23 @@ class GroqProvider:
         return params
 
     def _error(
-        self, kind: ModelErrorKind, message: str, started: float, *, retry_after: float | None = None
+        self,
+        kind: ModelErrorKind,
+        message: str,
+        started: float,
+        *,
+        retry_after: float | None = None,
+        raw_output: str | None = None,
     ) -> ModelError:
         latency = int((time.monotonic() - started) * 1000)
         return ModelError(
-            kind, message, provider=self.name, model=self.model, latency_ms=latency, retry_after_seconds=retry_after
+            kind,
+            message,
+            provider=self.name,
+            model=self.model,
+            latency_ms=latency,
+            retry_after_seconds=retry_after,
+            raw_output=raw_output,
         )
 
     def generate(self, request: ModelRequest) -> ModelResponse:
@@ -128,9 +157,19 @@ class GroqProvider:
                 "rate-limited", "Groq is rate limiting requests.", started, retry_after=_retry_after(exc)
             ) from None
         except groq.BadRequestError as exc:
+            if _error_code(exc) == "json_validate_failed" and _ran_out_of_tokens(exc):
+                raise self._error(
+                    "truncated",
+                    "The model ran out of output tokens (reasoning counts toward the limit) before finishing.",
+                    started,
+                    raw_output=_failed_generation(exc),
+                ) from None
             if _error_code(exc) == "json_validate_failed":
                 raise self._error(
-                    "invalid-output", "The model's output did not match the required schema.", started
+                    "invalid-output",
+                    "The model's output did not match the required schema.",
+                    started,
+                    raw_output=_failed_generation(exc),
                 ) from None
             raise self._error("bad-request", "Groq rejected the request as invalid.", started) from None
         except groq.APITimeoutError:

@@ -10,6 +10,7 @@ from ..db.session import SessionFactory
 from ..errors import ApiError
 from ..services.auth import AuthService
 from ..services.projects import ProjectsService
+from ..services.requirements import RequirementsService
 from ..services.runs import RunsService
 
 SESSION_COOKIE = "omniora_session"
@@ -22,6 +23,7 @@ class Container:
     auth: AuthService
     projects: ProjectsService
     runs: RunsService
+    requirements: RequirementsService
 
 
 def get_container(request: Request) -> Container:

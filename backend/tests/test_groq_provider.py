@@ -77,9 +77,16 @@ def ok(content: str | None, **kwargs) -> httpx.Response:
     return httpx.Response(200, json=completion(content, **kwargs), headers={"x-request-id": "req_groq_1"})
 
 
-def error(status: int, code: str = "", headers: dict | None = None) -> httpx.Response:
+def error(
+    status: int, code: str = "", headers: dict | None = None, message: str = "", failed_generation: str = ""
+) -> httpx.Response:
     body = {
-        "error": {"message": f"provider says {FAKE_KEY} is involved", "type": "invalid_request_error", "code": code}
+        "error": {
+            "message": message or f"provider says {FAKE_KEY} is involved",
+            "type": "invalid_request_error",
+            "code": code,
+            **({"failed_generation": failed_generation} if failed_generation else {}),
+        }
     }
     return httpx.Response(status, json=body, headers=headers or {})
 
@@ -154,6 +161,18 @@ class TestFailures:
     def test_schema_rejection_by_the_provider_is_a_retryable_invalid_output(self) -> None:
         err = self.failure(FakeGroqApi(error(400, "json_validate_failed")))
         assert err.kind == "invalid-output" and err.retryable
+
+    def test_rejected_generation_is_kept_for_diagnosis_but_the_message_is_not(self) -> None:
+        err = self.failure(FakeGroqApi(error(400, "json_validate_failed", failed_generation='{"tags": ["payment"]}')))
+        assert err.kind == "invalid-output" and err.raw_output == '{"tags": ["payment"]}'
+        assert FAKE_KEY not in err.message
+
+    def test_running_out_of_output_tokens_is_reported_as_truncation(self) -> None:
+        # Seen live: Groq reports a reasoning-heavy output cut off by max_completion_tokens as a schema failure.
+        message = "max completion tokens reached before generating a valid document: the output was truncated"
+        err = self.failure(FakeGroqApi(error(400, "json_validate_failed", message=message)))
+        assert err.kind == "truncated" and err.retryable
+        assert "output tokens" in err.message and "truncated to fit" not in err.message
 
     def test_other_bad_requests_are_permanent(self) -> None:
         err = self.failure(FakeGroqApi(error(400, "model_decommissioned")))
@@ -276,9 +295,11 @@ def test_groq_keys_are_redacted_from_logs() -> None:
 def test_worker_records_a_failed_run_and_no_plan_when_groq_rejects_credentials(signed_in, make_worker) -> None:
     client = signed_in()
     project_id = client.post("/api/v1/projects", json=configuration()).json()["id"]
-    run_id = client.post(f"/api/v1/projects/{project_id}/runs", headers={"Idempotency-Key": "key-groq-001"}).json()[
-        "id"
-    ]
+    run_id = client.post(
+        f"/api/v1/projects/{project_id}/runs",
+        headers={"Idempotency-Key": "key-groq-001"},
+        json={"withoutRequirements": True},
+    ).json()["id"]
     make_worker(FakeGroqApi(error(401)).provider()).run_once()
     body = client.get(f"/api/v1/runs/{run_id}").json()
     assert body["run"]["state"] == "failed" and body["run"]["failureCode"] == "provider-auth"

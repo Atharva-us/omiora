@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppErrorCode } from '@/domain/errors';
+import type { ApprovedRequirements } from '@/domain/requirements/requirements';
 import { isTerminalRunState, type ApprovalDecision, type RunDetail, type RunEvent } from '@/domain/runs/run';
 import { useAsyncData } from '@/hooks/use-async-data';
 import { useErrorReporter } from '@/hooks/use-error-reporter';
@@ -11,13 +12,16 @@ export interface ProjectRun {
   /** False in demo mode or for sample projects: the UI explains instead of offering actions. */
   available: boolean;
   detail: RunDetail | null;
+  /** The project's latest approved requirements; normal planning starts from (and is pinned to) them. */
+  approvedRequirements: ApprovedRequirements | null;
   events: RunEvent[];
   stream: RunStreamStatus | 'idle';
   isLoading: boolean;
   loadError: { message: string; code: AppErrorCode | undefined } | null;
   actionError: string | null;
   busy: boolean;
-  start: () => Promise<void>;
+  /** `withoutRequirements` is the explicit, recorded choice to plan without approved requirements. */
+  start: (options?: { withoutRequirements?: boolean }) => Promise<void>;
   cancel: () => Promise<void>;
   decide: (decision: ApprovalDecision, comment?: string) => Promise<void>;
   reload: () => void;
@@ -34,17 +38,17 @@ const mergeEvents = (base: RunEvent[], extra: RunEvent[]) => {
  * reconnect) triggers a re-fetch of the run, because the API, not the stream, is the source of truth.
  */
 export function useProjectRun(projectId: string, enabled: boolean): ProjectRun {
-  const { runs } = useServices();
+  const { runs, requirements } = useServices();
   const reportError = useErrorReporter();
   const available = runs.available && enabled;
 
   const load = useCallback(async () => {
     if (!available) return null;
-    const [latest] = await runs.listRuns(projectId);
-    if (!latest) return null;
+    const [[latest], approved] = await Promise.all([runs.listRuns(projectId), requirements.getApproved(projectId)]);
+    if (!latest) return { detail: null, events: [], approved };
     const [detail, events] = await Promise.all([runs.getRun(latest.id), runs.listEvents(latest.id, 0)]);
-    return { detail, events };
-  }, [available, runs, projectId]);
+    return { detail, events, approved };
+  }, [available, runs, requirements, projectId]);
   const { data, errorMessage, errorCode, isLoading, reload } = useAsyncData(load, 'run.load-failed');
 
   const [streamed, setStreamed] = useState<{ runId: string; events: RunEvent[] } | null>(null);
@@ -117,16 +121,17 @@ export function useProjectRun(projectId: string, enabled: boolean): ProjectRun {
   return {
     available,
     detail,
+    approvedRequirements: data?.approved ?? null,
     events,
     stream: terminal ? 'idle' : stream,
     isLoading: available && isLoading && !data,
     loadError: errorMessage ? { message: errorMessage, code: errorCode } : null,
     actionError,
     busy,
-    start: () =>
+    start: (options) =>
       act('run.start-failed', async () => {
         pendingKey.current ??= newIdempotencyKey();
-        await runs.startPlanning(projectId, pendingKey.current);
+        await runs.startPlanning(projectId, pendingKey.current, options);
         pendingKey.current = null;
       }),
     cancel: () => act('run.cancel-failed', () => (runId ? runs.cancel(runId) : Promise.resolve())),

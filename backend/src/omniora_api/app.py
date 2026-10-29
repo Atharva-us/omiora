@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.deps import Container
 from .api.middleware import BodySizeLimitMiddleware, CsrfMiddleware, SecurityHeadersMiddleware
-from .api.routes import auth, health, projects, runs
+from .api.routes import auth, health, projects, requirements, runs
 from .config import Settings, get_settings
 from .db.session import SessionFactory, make_engine, make_session_factory
 from .errors import install_error_handlers
@@ -16,6 +16,7 @@ from .security.rate_limit import SlidingWindowLimiter
 from .services import Clock, utcnow
 from .services.auth import AuthService
 from .services.projects import ProjectsService
+from .services.requirements import RequirementsService
 from .services.runs import RunsService
 
 API_PREFIX = "/api/v1"
@@ -29,6 +30,7 @@ def create_app(
     clock: Clock = utcnow,
 ) -> FastAPI:
     settings = settings or get_settings()
+    configured = settings.model_configured if provider_configured is None else provider_configured
     if factory is None:
         configure_logging(settings.log_level)
         factory = make_session_factory(make_engine(settings.database_url))
@@ -47,7 +49,16 @@ def create_app(
             factory,
             runs_per_user_per_hour=settings.runs_per_user_per_hour,
             job_max_deliveries=settings.job_max_deliveries,
-            provider_configured=settings.model_configured if provider_configured is None else provider_configured,
+            provider_configured=configured,
+            clock=clock,
+        ),
+        requirements=RequirementsService(
+            factory,
+            runs_per_user_per_hour=settings.runs_per_user_per_hour,
+            turns_per_user_per_hour=settings.analyst_turns_per_user_per_hour,
+            max_turns=settings.analyst_max_turns,
+            job_max_deliveries=settings.job_max_deliveries,
+            provider_configured=configured,
             clock=clock,
         ),
     )
@@ -76,7 +87,7 @@ def create_app(
     app.add_middleware(SecurityHeadersMiddleware, hsts=settings.env == "production")
 
     app.include_router(health.router)
-    for router in (auth.router, projects.router, runs.router):
+    for router in (auth.router, projects.router, runs.router, requirements.router):
         app.include_router(router, prefix=API_PREFIX)
     return app
 

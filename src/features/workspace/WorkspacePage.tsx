@@ -25,6 +25,8 @@ import { PreviewPanel } from './panels/PreviewPanel';
 import { TasksPanel } from './panels/TasksPanel';
 import { TestsPanel } from './panels/TestsPanel';
 import { ProjectSummary } from './ProjectSummary';
+import { RequirementsPanel } from './requirements/RequirementsPanel';
+import { useRequirementsSession } from './requirements/use-requirements-session';
 import { useProjectRun } from './run/use-project-run';
 import { WorkspaceActions, type WorkspaceModal } from './WorkspaceActions';
 import { WORKSPACE_TABS, type WorkspaceTab } from './workspace-model';
@@ -54,7 +56,9 @@ export function WorkspacePage() {
   );
   const { data, errorMessage, errorCode, isLoading, reload } = useAsyncData(loadWorkspace, 'workspace.load-failed');
   const project = data?.[0] ?? null;
-  const run = useProjectRun(projectId, project !== null && project.source === 'user');
+  const isUserProject = project !== null && project.source === 'user';
+  const run = useProjectRun(projectId, isUserProject);
+  const discovery = useRequirementsSession(projectId, isUserProject);
 
   if (isLoading && !data) return <LoadingBlock label="Opening workspace" />;
 
@@ -180,7 +184,19 @@ export function WorkspacePage() {
           )}
           <TabPanel idPrefix="workspace" id={tab} className="min-h-0 flex-1 overflow-auto">
             {tab === 'preview' && <PreviewPanel />}
-            {tab === 'plan' && <PlanPanel run={run} isSample={isSample} />}
+            {tab === 'requirements' && (
+              <RequirementsPanel
+                discovery={discovery}
+                isSample={isSample}
+                onOpenPlan={() => {
+                  run.reload(); // pick up the newly approved requirements
+                  setTab('plan');
+                }}
+              />
+            )}
+            {tab === 'plan' && (
+              <PlanPanel run={run} isSample={isSample} onOpenRequirements={() => setTab('requirements')} />
+            )}
             {tab === 'code' && (
               <CodePanel
                 path={selectedPath}

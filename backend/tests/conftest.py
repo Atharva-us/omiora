@@ -15,6 +15,7 @@ from sqlalchemy import Engine, create_engine, text
 from omniora_api.app import create_app
 from omniora_api.config import Settings
 from omniora_api.db.session import SessionFactory, make_session_factory
+from omniora_api.worker.discovery import DiscoveryJobHandler
 from omniora_api.worker.planning import PlanningJobHandler
 from omniora_api.worker.runner import Worker
 
@@ -118,6 +119,7 @@ def make_worker(factory: SessionFactory, settings: Settings, clock: FakeClock) -
     def build(provider: ScriptedProvider, owner: str = "worker-a", **setting_overrides) -> Worker:
         worker_settings = settings.model_copy(update=setting_overrides)
         handler = PlanningJobHandler(factory, provider, worker_settings, clock)
-        return Worker(factory, handler, owner=owner, lease_seconds=60, clock=clock)
+        discovery = DiscoveryJobHandler(factory, provider, worker_settings, clock)
+        return Worker(factory, handler, discovery=discovery, owner=owner, lease_seconds=60, clock=clock)
 
     return build

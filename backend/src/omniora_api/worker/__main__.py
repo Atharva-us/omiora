@@ -9,6 +9,7 @@ from ..config import get_settings
 from ..db.session import make_engine, make_session_factory
 from ..llm.factory import build_planning_provider
 from ..logging_setup import configure_logging
+from .discovery import DiscoveryJobHandler
 from .planning import PlanningJobHandler
 from .runner import Worker
 
@@ -21,6 +22,7 @@ def main() -> None:
     worker = Worker(
         factory,
         PlanningJobHandler(factory, provider, settings),
+        discovery=DiscoveryJobHandler(factory, provider, settings),
         lease_seconds=settings.worker_lease_seconds,
         poll_seconds=settings.worker_poll_seconds,
     )

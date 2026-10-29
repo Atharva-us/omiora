@@ -23,7 +23,11 @@ def create_project(client, **overrides) -> str:
 
 
 def start(client, project_id: str, key: str = "key-00000001"):
-    return client.post(f"{PROJECTS}/{project_id}/runs", headers={"Idempotency-Key": key})
+    # These tests cover the planning engine itself, so they use the explicit plan-without-requirements
+    # path; planning from approved requirements is covered in test_requirements_api.py.
+    return client.post(
+        f"{PROJECTS}/{project_id}/runs", headers={"Idempotency-Key": key}, json={"withoutRequirements": True}
+    )
 
 
 def detail(client, run_id: str) -> dict:

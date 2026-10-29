@@ -5,6 +5,7 @@ import type { RunStreamStatus } from '@/services/contracts/run-service';
 import { createHttpAuthService } from './authentication-service';
 import { createHttpClient } from './http-client';
 import { createHttpProjectService } from './project-service';
+import { createHttpRequirementsService } from './requirements-service';
 import { createHttpRunService, type EventSourceLike } from './run-service';
 
 const json = (body: unknown, status = 200) =>
@@ -113,7 +114,7 @@ describe('http run service', () => {
     const fetch = vi.fn(async () =>
       json({
         id: 'r1', projectId: 'p1', agentRole: 'project-manager', state: 'queued', currentPlanVersion: null,
-        failureCode: null, failureMessage: null, lastEventSeq: 1,
+        failureCode: null, failureMessage: null, lastEventSeq: 1, pinnedRequirementsVersionId: null, requirementsSkipped: false,
         createdAt: '2026-10-29T12:00:00.000Z', updatedAt: '2026-10-29T12:00:00.000Z',
       }, 202),
     );
@@ -146,5 +147,36 @@ describe('http run service', () => {
     expect(statuses).toEqual(['connecting', 'open', 'reconnecting', 'closed']);
     expect(ended).toEqual(['approved']);
     expect(source.closed).toBe(true);
+  });
+});
+
+describe('http requirements service', () => {
+  it('posts answers with the idempotency key and maps a missing approval to null', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith('/requirements/approved')) {
+        return json({ error: { code: 'not-found', message: 'This project has no approved requirements yet.' } }, 404);
+      }
+      return json({ error: { code: 'conflict', message: 'The analyst is still working on the previous turn.' } }, 409);
+    });
+    const service = createHttpRequirementsService(createHttpClient('https://api.test', fetch));
+    expect(await service.getApproved('p1')).toBeNull();
+    const error = await catchError(
+      service.submitAnswers('s1', 'answers-abc', [{ questionKey: 'DQ-001', unknown: true }], true),
+    );
+    expect(error).toMatchObject({ code: 'conflict' });
+    const post = calls[1]!;
+    expect(post.url).toBe('https://api.test/api/v1/requirements-sessions/s1/answers');
+    expect(post.init?.headers).toMatchObject({ 'Idempotency-Key': 'answers-abc', 'X-Omniora-Client': 'web' });
+    expect(JSON.parse(String(post.init?.body))).toEqual({ answers: [{ questionKey: 'DQ-001', unknown: true }], advance: true });
+  });
+
+  it('requests a version diff and rejects malformed session data', async () => {
+    const fetch = vi.fn(async () => json({ session: { id: 's1' } }));
+    const service = createHttpRequirementsService(createHttpClient('https://api.test', fetch));
+    expect(await catchError(service.getSession('s1'))).toMatchObject({ code: 'unexpected' });
+    await catchError(service.getVersion('s1', 3, 2));
+    expect(fetch).toHaveBeenLastCalledWith('https://api.test/api/v1/requirements-sessions/s1/versions/3?diff=2', expect.anything());
   });
 });

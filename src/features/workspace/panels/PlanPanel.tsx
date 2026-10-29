@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
-import { Check, CircleDot, ClipboardList, RotateCcw, Square, X } from 'lucide-react';
+import { Check, CircleDot, ClipboardList, Flag, ListTodo, RotateCcw, Square, X } from 'lucide-react';
 import { LoadErrorNotice } from '@/components/feedback/LoadErrorNotice';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -94,18 +94,37 @@ function PlanView({ detail }: { detail: RunDetail }) {
         </Section>
       )}
 
-      <Section title="Requirements">
-        <ul className="divide-y divide-line-soft rounded-lg border border-line bg-surface">
-          {content.requirements.map((requirement) => (
-            <li key={requirement.id} className="flex items-start gap-3 px-4 py-2.5 text-sm">
-              <span className="font-mono text-xs text-faint">{requirement.id}</span>
-              <span className="flex-1 text-ink">{requirement.statement}</span>
-              <Badge tone={requirement.priority === 'must' ? 'info' : 'neutral'}>{requirement.priority}</Badge>
-              {requirement.source === 'inferred' && <Badge>inferred</Badge>}
-            </li>
-          ))}
-        </ul>
-      </Section>
+      {content.flaggedRequirements.length > 0 && (
+        <Section title="Flagged requirements">
+          <Notice tone="warning" className="mb-3">
+            These approved must-haves are not covered by any task. The Project Manager gave a reason for each.
+          </Notice>
+          <ul className="space-y-2">
+            {content.flaggedRequirements.map((flag) => (
+              <li key={flag.id} className="flex items-start gap-2 rounded-lg border border-line bg-surface p-3 text-sm">
+                <Flag aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                <span className="font-mono text-xs text-faint">{flag.id}</span>
+                <span className="flex-1 text-ink">{flag.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {content.requirements.length > 0 && (
+        <Section title={detail.requirements ? 'Derived requirements (added by the Project Manager)' : 'Requirements'}>
+          <ul className="divide-y divide-line-soft rounded-lg border border-line bg-surface">
+            {content.requirements.map((requirement) => (
+              <li key={requirement.id} className="flex items-start gap-3 px-4 py-2.5 text-sm">
+                <span className="font-mono text-xs text-faint">{requirement.id}</span>
+                <span className="flex-1 text-ink">{requirement.statement}</span>
+                <Badge tone={requirement.priority === 'must' ? 'info' : 'neutral'}>{requirement.priority}</Badge>
+                {requirement.source === 'inferred' && <Badge>inferred</Badge>}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
 
       {content.assumptions.length > 0 && (
         <Section title="Assumptions">
@@ -252,7 +271,83 @@ function DecisionControls({ run }: { run: ProjectRun }) {
   );
 }
 
-export function PlanPanel({ run, isSample }: { run: ProjectRun; isSample: boolean }) {
+/** How a plan can be started: from approved requirements, or by explicitly skipping them. */
+function StartPlanningActions({ run, onOpenRequirements, label }: { run: ProjectRun; onOpenRequirements: () => void; label?: string }) {
+  const [confirmSkip, setConfirmSkip] = useState(false);
+  const approved = run.approvedRequirements;
+  return (
+    <div className="flex flex-wrap justify-center gap-2">
+      {approved ? (
+        <Button onClick={() => run.start()} loading={run.busy}>
+          {label ?? 'Start planning'} from requirements v{approved.version.version}
+        </Button>
+      ) : (
+        <Button onClick={onOpenRequirements}>
+          <ListTodo aria-hidden="true" />
+          Go to requirements
+        </Button>
+      )}
+      <Button variant="ghost" onClick={() => setConfirmSkip(true)} disabled={run.busy}>
+        Plan without requirements
+      </Button>
+      <Modal
+        open={confirmSkip}
+        onClose={() => setConfirmSkip(false)}
+        title="Plan without approved requirements?"
+        description="The run is recorded as planned without requirements."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmSkip(false)}>
+              Cancel
+            </Button>
+            <Button
+              data-autofocus
+              loading={run.busy}
+              onClick={async () => {
+                await run.start({ withoutRequirements: true });
+                setConfirmSkip(false);
+              }}
+            >
+              Plan without requirements
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-muted">
+          The Project Manager will work from the brief and notes only. Nothing marks the requirements step as done, and the
+          plan is labelled accordingly.
+        </p>
+      </Modal>
+    </div>
+  );
+}
+
+function PlanBasis({ detail }: { detail: RunDetail }) {
+  if (detail.requirements) {
+    return (
+      <p className="mt-1 text-xs text-faint">
+        Follows approved requirements v{detail.requirements.version} · sha256{' '}
+        <span className="font-mono">{detail.requirements.contentSha256.slice(0, 12)}</span>…
+      </p>
+    );
+  }
+  if (detail.run.requirementsSkipped) {
+    return (
+      <Badge tone="warning" className="mt-1.5">
+        Planned without approved requirements
+      </Badge>
+    );
+  }
+  return null;
+}
+
+interface PlanPanelProps {
+  run: ProjectRun;
+  isSample: boolean;
+  onOpenRequirements: () => void;
+}
+
+export function PlanPanel({ run, isSample, onOpenRequirements }: PlanPanelProps) {
   const { mode } = useServices();
   if (isSample) {
     return (
@@ -297,14 +392,11 @@ export function PlanPanel({ run, isSample }: { run: ProjectRun; isSample: boolea
         <EmptyState
           icon={ClipboardList}
           title="No plan yet"
-          action={
-            <Button onClick={run.start} loading={run.busy}>
-              Start planning
-            </Button>
-          }
+          action={<StartPlanningActions run={run} onOpenRequirements={onOpenRequirements} />}
         >
-          The Project Manager agent reads your configuration and notes, then drafts requirements, open questions, and
-          proposed tasks for you to review. It does not write or run code.
+          {run.approvedRequirements
+            ? `The Project Manager plans from approved requirements v${run.approvedRequirements.version.version}: every task references their ids, and every must-have is covered or flagged with a reason. It does not write or run code.`
+            : 'Planning starts from requirements you approve. Run the Requirements Analyst first, or explicitly plan without requirements. The Project Manager does not write or run code.'}
         </EmptyState>
       </div>
     );
@@ -328,6 +420,7 @@ export function PlanPanel({ run, isSample }: { run: ProjectRun; isSample: boolea
             )}
           </div>
           <p className="mt-1.5 text-[0.8125rem] text-muted">{meta.description}</p>
+          <PlanBasis detail={detail} />
           {streamLabel && (
             <p role="status" className="mt-1 text-xs text-faint">
               {streamLabel}
@@ -340,11 +433,7 @@ export function PlanPanel({ run, isSample }: { run: ProjectRun; isSample: boolea
               Cancel run
             </Button>
           )}
-          {terminal && (
-            <Button size="sm" onClick={run.start} loading={run.busy}>
-              Start a new plan
-            </Button>
-          )}
+          {terminal && <StartPlanningActions run={run} onOpenRequirements={onOpenRequirements} label="New plan" />}
         </div>
       </div>
 

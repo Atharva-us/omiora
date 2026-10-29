@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from ..domain.plans import ProjectPlan, plan_output_schema, plan_problems
 from ..domain.projects import TECHNOLOGIES, ProjectConfiguration
+from ..domain.requirements import ApprovedRequirements
 from ..llm.base import Effort, ModelError, ModelProvider, ModelRequest, ModelResponse
 
 RAW_OUTPUT_LIMIT = 64_000
@@ -54,6 +55,19 @@ able to do, do not fill the gap with an imagined feature set: keep the tasks to 
 example a requirements discovery task for the Requirements Analyst) and minimal foundations, and \
 ask blocking questions about the users and their core features.
 
+State the protections the product cannot safely ship without as testable requirements, even when \
+the brief does not name them. In particular, when separate customers, organisations, teams, or \
+workspaces share one deployment, include a "must" requirement that each one's data is isolated \
+from the others, and a task whose acceptance criteria prove that cross-tenant access is denied. \
+If it is unclear whether data is shared between them, ask a blocking question as well.
+
+When <approved_requirements> is present, the user has reviewed and approved those requirements. \
+Do not restate, reword, re-prioritise, or drop them: reference their REQ- ids in each task's \
+requirement_ids. Your own requirements list then holds only additional requirements you derive, \
+with ids D1, D2, ... and source "inferred" (it may be empty). Cover every approved "must" \
+requirement with at least one task; if one cannot be planned yet, list it in flagged_requirements \
+with the reason. Without approved requirements, flagged_requirements is empty.
+
 Produce the plan as JSON matching the provided schema:
 - summary: what will be built and for whom, in a few sentences.
 - requirements: testable statements with ids R1, R2, ... Mark source "user" when stated in the \
@@ -86,6 +100,7 @@ class PlanningInput:
     notes: list[str]
     previous_plan: dict | None = None
     revision_comment: str | None = None
+    approved_requirements: ApprovedRequirements | None = None
 
 
 @dataclass
@@ -126,6 +141,23 @@ def build_user_content(planning_input: PlanningInput, feedback: list[str] | None
         json.dumps(planning_input.notes, indent=2) if planning_input.notes else "[]",
         "</notes>",
     ]
+    approved = planning_input.approved_requirements
+    if approved is not None:
+        document = approved.document
+        sections += [
+            f'<approved_requirements version="{approved.version}" sha256="{approved.content_sha256}">',
+            json.dumps(
+                {
+                    "context": document.context.model_dump(mode="json"),
+                    "requirements": [
+                        r.model_dump(mode="json", exclude={"deprecation_reason"}) for r in document.active()
+                    ],
+                    "assumptions": [a.model_dump(mode="json") for a in document.assumptions],
+                },
+                indent=2,
+            ),
+            "</approved_requirements>",
+        ]
     if planning_input.previous_plan is not None:
         sections += [
             "<previous_plan>",
@@ -147,7 +179,9 @@ def build_user_content(planning_input: PlanningInput, feedback: list[str] | None
     return "\n".join(sections)
 
 
-def validate_output(text: str, configuration: ProjectConfiguration) -> tuple[ProjectPlan | None, list[str]]:
+def validate_output(
+    text: str, configuration: ProjectConfiguration, approved: ApprovedRequirements | None = None
+) -> tuple[ProjectPlan | None, list[str]]:
     """Shape validation (Pydantic) then semantic validation. Returns (plan, problems)."""
     try:
         data = json.loads(text)
@@ -160,7 +194,7 @@ def validate_output(text: str, configuration: ProjectConfiguration) -> tuple[Pro
             f"{'.'.join(str(part) for part in error['loc']) or 'plan'}: {error['msg']}" for error in exc.errors()[:25]
         ]
         return None, problems
-    problems = plan_problems(plan, configuration)
+    problems = plan_problems(plan, configuration, approved)
     return (None, problems) if problems else (plan, [])
 
 
@@ -209,6 +243,7 @@ def run_project_manager(
                 request_id=error.request_id,
                 error_code=error.kind,
                 error_message=error.message[:500],
+                raw_output=error.raw_output[:RAW_OUTPUT_LIMIT] if error.raw_output else None,
             )
             attempts.append(record)
             on_attempt(record)
@@ -219,7 +254,9 @@ def run_project_manager(
                 sleep(wait)
             continue
 
-        plan, problems = validate_output(response.text, planning_input.configuration)
+        plan, problems = validate_output(
+            response.text, planning_input.configuration, planning_input.approved_requirements
+        )
         record = AttemptRecord(
             attempt=number,
             outcome="succeeded" if plan else "invalid-output",

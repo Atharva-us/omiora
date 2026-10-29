@@ -4,9 +4,11 @@ import { createLocalProjectService } from '@/services/demo/local-project-service
 import { createHttpAuthService } from '@/services/http/authentication-service';
 import { createHttpClient } from '@/services/http/http-client';
 import { createHttpProjectService } from '@/services/http/project-service';
+import { createHttpRequirementsService } from '@/services/http/requirements-service';
 import { createHttpRunService, type EventSourceFactory } from '@/services/http/run-service';
 import type { Services } from '@/services/services-context';
 import { createUnconfiguredAuthService } from '@/services/unconfigured/authentication-service';
+import { createUnavailableRequirementsService } from '@/services/unconfigured/requirements-service';
 import { createUnavailableRunService } from '@/services/unconfigured/run-service';
 import type { AppConfig } from '../configuration/app-config';
 
@@ -37,6 +39,7 @@ export function createServices(config: AppConfig, overrides: CompositionOverride
       projects: createHttpProjectService(http),
       auth: createHttpAuthService(http),
       runs: createHttpRunService(http, overrides.eventSource),
+      requirements: createHttpRequirementsService(http),
       uiState,
       logger,
     };
@@ -51,6 +54,7 @@ export function createServices(config: AppConfig, overrides: CompositionOverride
     }),
     auth: createUnconfiguredAuthService(),
     runs: createUnavailableRunService(),
+    requirements: createUnavailableRequirementsService(),
     uiState,
     logger,
   };

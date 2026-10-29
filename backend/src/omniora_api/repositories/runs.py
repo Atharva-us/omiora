@@ -8,7 +8,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..db.models import AgentAttempt, Approval, EngineeringTask, Job, PlanVersion, Project, Run, RunEvent
-from ..domain.runs import ApprovalStatus, JobStatus, RunState
+from ..domain.runs import ACTIVE_STATES, ApprovalStatus, JobStatus, RunState
 
 
 def get_run_for_owner(session: Session, run_id: uuid.UUID, owner_id: uuid.UUID, *, lock: bool = False) -> Run | None:
@@ -31,10 +31,13 @@ def get_run_by_idempotency_key(session: Session, project_id: uuid.UUID, key: str
     return session.scalar(select(Run).where(Run.project_id == project_id, Run.idempotency_key == key))
 
 
-def list_project_runs(session: Session, project_id: uuid.UUID, limit: int = 50) -> list[Run]:
+def list_project_runs(session: Session, project_id: uuid.UUID, agent_role: str, limit: int = 50) -> list[Run]:
     return list(
         session.scalars(
-            select(Run).where(Run.project_id == project_id).order_by(Run.created_at.desc(), Run.id.desc()).limit(limit)
+            select(Run)
+            .where(Run.project_id == project_id, Run.agent_role == agent_role)
+            .order_by(Run.created_at.desc(), Run.id.desc())
+            .limit(limit)
         )
     )
 
@@ -227,4 +230,4 @@ def close_pending_approvals(session: Session, run_id: uuid.UUID, status: Approva
 
 
 def is_active(run: Run) -> bool:
-    return RunState(run.state) in (RunState.QUEUED, RunState.PLANNING, RunState.AWAITING_APPROVAL)
+    return RunState(run.state) in ACTIVE_STATES

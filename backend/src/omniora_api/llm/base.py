@@ -65,6 +65,7 @@ class ModelError(Exception):
         request_id: str | None = None,
         latency_ms: int | None = None,
         retry_after_seconds: float | None = None,
+        raw_output: str | None = None,
     ) -> None:
         super().__init__(message)
         self.kind: ModelErrorKind = kind
@@ -75,6 +76,8 @@ class ModelError(Exception):
         self.latency_ms = latency_ms
         # Provider-requested wait (e.g. from a 429 `retry-after` header) before trying again.
         self.retry_after_seconds = retry_after_seconds
+        # The model's own rejected output, when the provider returns it (never request data or credentials).
+        self.raw_output = raw_output
 
     @property
     def retryable(self) -> bool:

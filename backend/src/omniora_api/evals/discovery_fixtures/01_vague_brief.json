@@ -1,0 +1,71 @@
+{
+  "name": "vague-brief",
+  "description": "A one-line brief. The analyst must not invent a product: keep requirements minimal and ask blocking questions about users and core features.",
+  "input": {
+    "configuration": {
+      "name": "Bright Idea",
+      "description": "An app for my small business.",
+      "platform": "website",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": { "features": [], "custom": "" }
+    },
+    "notes": [],
+    "previous": null,
+    "questions": [],
+    "turn": 1,
+    "max_turns": 8
+  },
+  "candidate": {
+    "source": "hand-authored reference output (not model output)",
+    "output": {
+      "context": {
+        "goal": "A website for the user's small business; the business, its users, and their needs are not described yet.",
+        "scope": "",
+        "platform": "website",
+        "deployment": "",
+        "personas": [],
+        "tenancy": "single",
+        "constraints": [],
+        "integrations": [],
+        "out_of_scope": []
+      },
+      "operations": [
+        {
+          "op": "add", "id": "", "statement": "The website presents the business to its visitors.",
+          "kind": "functional", "priority": "must", "confidence": "medium", "source": "brief",
+          "evidence": ["brief:description"], "acceptance_criteria": ["A visitor can open the home page and see what the business offers."],
+          "tags": [], "reason": ""
+        }
+      ],
+      "questions": [
+        {
+          "prompt": "Who will use the website?", "why": "The users decide every feature and the data the site must handle.",
+          "kind": "multiple-choice",
+          "options": ["Customers buying products", "Customers booking services", "Existing clients who sign in", "Staff only"],
+          "blocking": true, "topic": "users", "relates_to": []
+        },
+        {
+          "prompt": "What must visitors be able to do on the site at launch?", "why": "Defines the core scope of the first version.",
+          "kind": "free-text", "options": [], "blocking": true, "topic": "scope", "relates_to": []
+        },
+        {
+          "prompt": "Do you need to take payments online?", "why": "Payments add a provider integration and security obligations.",
+          "kind": "yes-no", "options": [], "blocking": false, "topic": "scope", "relates_to": []
+        }
+      ],
+      "withdraw_questions": [],
+      "assumptions": [{ "statement": "The site serves one business, not several separate organisations.", "confidence": "medium", "basis": [] }],
+      "readiness": { "ready": false, "blockers": ["The users and core features are unknown."] },
+      "decisions": ["Did not invent features from a one-line brief; asked about users and core features first."]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "ready": false,
+    "max_questions": 5,
+    "question_topics": ["users", "scope"],
+    "min_blocking_questions": 1,
+    "max_active_requirements": 3
+  }
+}

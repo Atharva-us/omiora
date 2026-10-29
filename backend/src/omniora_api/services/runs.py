@@ -1,8 +1,12 @@
-"""Run use cases: start, read, cancel, and approval decisions.
+"""Planning run use cases: start, read, cancel, and approval decisions.
 
 Every state change happens under the run's row lock, is validated against the state machine, and
 appends its run event in the same transaction. Commands that a client may retry (start, cancel,
 approval decisions) are idempotent.
+
+Planning normally starts from the project's latest approved requirements (Agent 2), and the run is
+pinned to that exact version. Planning without requirements is a separate, explicit choice that
+is recorded on the run (`requirements_skipped`); it is never a silent fallback.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 
 from ..audit import append_audit
-from ..db.models import AgentAttempt, Approval, EngineeringTask, PlanVersion, Run, RunEvent
+from ..db.models import AgentAttempt, Approval, EngineeringTask, PlanVersion, RequirementsVersion, Run, RunEvent
 from ..db.session import SessionFactory, transaction
 from ..domain.runs import (
     DECISION_RESULT,
@@ -28,6 +32,7 @@ from ..domain.runs import (
 )
 from ..errors import ApiError
 from ..repositories import projects as projects_repo
+from ..repositories import requirements as requirements_repo
 from ..repositories import runs as repo
 from . import Clock, utcnow
 from .projects import parse_project_id
@@ -43,6 +48,7 @@ class RunDetail:
     tasks: list[EngineeringTask]
     approvals: list[Approval]
     attempts: list[AgentAttempt]
+    requirements: RequirementsVersion | None = None  # the pinned approved version, if any
 
 
 def plan_job_key(run_id: uuid.UUID, version: int) -> str:
@@ -52,7 +58,7 @@ def plan_job_key(run_id: uuid.UUID, version: int) -> str:
 def transition(session, run: Run, target: RunState, now, data: dict[str, Any] | None = None) -> None:
     """Caller holds the run lock. Raises if the state machine forbids the move."""
     current = RunState(run.state)
-    if not can_transition(current, target):
+    if not can_transition(current, target, run.agent_role):
         raise ApiError("conflict", f"This run cannot move from {current.value} to {target.value}.")
     run.state = target.value
     run.updated_at = now
@@ -77,7 +83,9 @@ class RunsService:
         self._provider_configured = provider_configured
         self._clock = clock
 
-    def start(self, user_id: uuid.UUID, project_id: str, idempotency_key: str) -> tuple[Run, bool]:
+    def start(
+        self, user_id: uuid.UUID, project_id: str, idempotency_key: str, *, without_requirements: bool = False
+    ) -> tuple[Run, bool]:
         """Returns (run, created). Repeating a key returns the original run without side effects."""
         pid = parse_project_id(project_id)
         with transaction(self._factory) as session:
@@ -86,7 +94,16 @@ class RunsService:
                 raise ApiError("not-found", "This project no longer exists.")
             existing = repo.get_run_by_idempotency_key(session, project.id, idempotency_key)
             if existing is not None:
+                if existing.agent_role != AGENT_ROLE:
+                    raise ApiError("conflict", "This idempotency key was already used for a different request.")
                 return existing, False
+            approved = None if without_requirements else requirements_repo.latest_approved_for_project(session, pid)
+            if approved is None and not without_requirements:
+                raise ApiError(
+                    "conflict",
+                    "Approve the project's requirements with the Requirements Analyst first, or explicitly choose "
+                    "to plan without requirements.",
+                )
             if not self._provider_configured:
                 raise ApiError(
                     "provider-not-configured",
@@ -107,6 +124,8 @@ class RunsService:
                 agent_role=AGENT_ROLE,
                 state=RunState.QUEUED.value,
                 idempotency_key=idempotency_key,
+                pinned_requirements_version_id=approved.id if approved else None,
+                requirements_skipped=without_requirements,
                 created_at=now,
                 updated_at=now,
             )
@@ -115,8 +134,15 @@ class RunsService:
                 session.flush()  # the project row lock serialises starts, but the partial unique index is the guarantee
             except IntegrityError:
                 session.rollback()
-                raise ApiError("conflict", "A planning run is already in progress for this project.") from None
-            repo.append_event(session, run, RunEventType.RUN_CREATED, {"agent": AGENT_ROLE}, now)
+                raise ApiError(
+                    "conflict", "Another run (planning or requirements discovery) is in progress for this project."
+                ) from None
+            basis = (
+                {"requirements_version_id": str(approved.id), "requirements_version": approved.version}
+                if approved
+                else {"requirements_skipped": True}
+            )
+            repo.append_event(session, run, RunEventType.RUN_CREATED, {"agent": AGENT_ROLE, **basis}, now)
             repo.add_job(
                 session,
                 run_id=run.id,
@@ -133,7 +159,7 @@ class RunsService:
                 action="run.started",
                 entity_type="run",
                 entity_id=str(run.id),
-                data={"project_id": str(project.id)},
+                data={"project_id": str(project.id), **basis},
             )
             return run, True
 
@@ -147,12 +173,16 @@ class RunsService:
         with transaction(self._factory) as session:
             if projects_repo.get_owned_project(session, pid, user_id) is None:
                 raise ApiError("not-found", "This project no longer exists.")
-            return repo.list_project_runs(session, pid)
+            return repo.list_project_runs(session, pid, AGENT_ROLE)
 
-    def _require(self, session, user_id: uuid.UUID, run_id: uuid.UUID, *, lock: bool = False) -> Run:
+    def _require(
+        self, session, user_id: uuid.UUID, run_id: uuid.UUID, *, lock: bool = False, planning: bool = False
+    ) -> Run:
         run = repo.get_run_for_owner(session, run_id, user_id, lock=lock)
         if run is None:
             raise ApiError("not-found", "This run does not exist.")
+        if planning and run.agent_role != AGENT_ROLE:
+            raise ApiError("conflict", "This is a requirements session; use the requirements session endpoints.")
         return run
 
     def detail(self, user_id: uuid.UUID, run_id: uuid.UUID) -> RunDetail:
@@ -162,8 +192,13 @@ class RunsService:
                 repo.get_plan_version(session, run.id, run.current_plan_version) if run.current_plan_version else None
             )
             tasks = repo.list_tasks(session, run.id, run.current_plan_version) if run.current_plan_version else []
+            pinned = (
+                requirements_repo.get_version_by_id(session, run.pinned_requirements_version_id)
+                if run.pinned_requirements_version_id
+                else None
+            )
             return RunDetail(
-                run, plan, tasks, repo.list_approvals(session, run.id), repo.list_attempts(session, run.id)
+                run, plan, tasks, repo.list_approvals(session, run.id), repo.list_attempts(session, run.id), pinned
             )
 
     def authorize(self, user_id: uuid.UUID, run_id: uuid.UUID) -> Run:
@@ -173,7 +208,7 @@ class RunsService:
     def cancel(self, user_id: uuid.UUID, run_id: uuid.UUID) -> Run:
         now = self._clock()
         with transaction(self._factory) as session:
-            run = self._require(session, user_id, run_id, lock=True)
+            run = self._require(session, user_id, run_id, lock=True, planning=True)
             if run.state == RunState.CANCELLED:
                 return run  # idempotent
             if RunState(run.state) in TERMINAL_STATES:
@@ -206,9 +241,9 @@ class RunsService:
             raise ApiError("validation", "Describe what should change when requesting a revision.")
         now = self._clock()
         with transaction(self._factory) as session:
-            run = self._require(session, user_id, run_id, lock=True)
+            run = self._require(session, user_id, run_id, lock=True, planning=True)
             approval = repo.get_approval(session, run.id, approval_id, lock=True)
-            if approval is None:
+            if approval is None or approval.gate != "plan":
                 raise ApiError("not-found", "This approval request does not exist.")
             if approval.plan_version != plan_version:
                 raise ApiError(

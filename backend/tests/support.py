@@ -146,3 +146,74 @@ def plan(**overrides: Any) -> dict[str, Any]:
 
 def plan_json(**overrides: Any) -> str:
     return json.dumps(plan(**overrides))
+
+
+# --- Requirements Analyst -----------------------------------------------------------------
+
+
+def requirement_op(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "op": "add",
+        "id": "",
+        "statement": "Shoppers can browse products by category.",
+        "kind": "functional",
+        "priority": "must",
+        "confidence": "high",
+        "source": "brief",
+        "evidence": ["brief:description"],
+        "acceptance_criteria": ["A shopper can open a category and see its products."],
+        "tags": [],
+        "reason": "",
+    }
+    base.update(overrides)
+    return base
+
+
+def analyst_context(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "goal": "Let makers sell handmade goods online.",
+        "scope": "Storefront, checkout, and order management for one shop.",
+        "platform": "website",
+        "deployment": "",
+        "personas": [{"name": "Shopper", "description": "Buys handmade goods."}],
+        "tenancy": "single",
+        "constraints": [],
+        "integrations": [],
+        "out_of_scope": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def question(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "prompt": "Which payment methods must checkout accept?",
+        "why": "Determines the payment integration.",
+        "kind": "multiple-choice",
+        "options": ["Cards", "PayPal", "Bank transfer"],
+        "blocking": True,
+        "topic": "scope",
+        "relates_to": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def analyst_output(**overrides: Any) -> dict[str, Any]:
+    """A valid first-turn output for the default `configuration()` (single-tenant storefront)."""
+    base: dict[str, Any] = {
+        "context": analyst_context(),
+        "operations": [requirement_op()],
+        "questions": [question()],
+        "withdraw_questions": [],
+        "assumptions": [],
+        "readiness": {"ready": False, "blockers": ["Payment methods are unknown."]},
+        "decisions": ["Started from the brief's description."],
+    }
+    result = copy.deepcopy(base)
+    result.update(overrides)
+    return result
+
+
+def analyst_json(**overrides: Any) -> str:
+    return json.dumps(analyst_output(**overrides))

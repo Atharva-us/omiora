@@ -22,8 +22,8 @@ const NOT_CONNECTED: readonly Capability[] = [
     detail: 'Contract defined (ReferenceAnalysisService). Reference URLs are stored with the configuration only.',
   },
   {
-    id: 'agents-2-10',
-    name: 'Agents 2–10 (design, architecture, engineering, QA, security)',
+    id: 'agents-3-10',
+    name: 'Agents 3–10 (design, architecture, engineering, QA, security)',
     status: 'not-connected',
     detail: 'Not implemented. The Project Manager may propose tasks for them; nothing executes those tasks.',
   },
@@ -69,11 +69,18 @@ export function capabilitiesFor(mode: ServiceMode): readonly Capability[] {
         detail: 'Email and password accounts with server-side sessions. Email verification and password reset are not available yet.',
       },
       {
+        id: 'requirements-discovery',
+        name: 'Requirements Analyst agent (discovery)',
+        status: 'available',
+        detail:
+          'Asks focused questions and keeps versioned requirements for your approval when the server has a model provider configured.',
+      },
+      {
         id: 'planning',
         name: 'Project Manager agent (planning)',
         status: 'available',
         detail:
-          'Produces a validated plan for your approval when the server has a model provider configured. It never writes or runs code.',
+          'Produces a validated plan for your approval, pinned to your approved requirements, when the server has a model provider configured. It never writes or runs code.',
       },
       ...NOT_CONNECTED,
     ];
@@ -90,6 +97,12 @@ export function capabilitiesFor(mode: ServiceMode): readonly Capability[] {
       name: 'Accounts and authentication',
       status: 'not-connected',
       detail: 'Demo mode has no backend, so no account can sign in.',
+    },
+    {
+      id: 'requirements-discovery',
+      name: 'Requirements Analyst agent (discovery)',
+      status: 'not-connected',
+      detail: 'Requires API mode and a running Omniora backend.',
     },
     {
       id: 'planning',

@@ -35,6 +35,10 @@ export const runSchema = z.object({
   failureCode: z.nullable(z.string()),
   failureMessage: z.nullable(z.string()),
   lastEventSeq: z.int(),
+  /** The approved requirements version this plan must follow, or null when planned without requirements. */
+  pinnedRequirementsVersionId: z.nullable(z.string()),
+  /** True when the user explicitly chose to plan without approved requirements. */
+  requirementsSkipped: z.boolean(),
   createdAt: timestamp,
   updatedAt: timestamp,
 });
@@ -57,6 +61,8 @@ export const planContentSchema = z.object({
   ),
   recommendedStack: z.object({ technologies: z.array(technologyIdSchema), rationale: z.string() }),
   requiredApprovals: z.array(z.object({ gate: z.enum(['plan', 'architecture', 'release']), description: z.string() })),
+  /** Approved must-have requirements the plan deliberately leaves uncovered, with the reason. */
+  flaggedRequirements: z.array(z.object({ id: z.string(), reason: z.string() })),
 });
 export type PlanContent = z.infer<typeof planContentSchema>;
 
@@ -121,6 +127,10 @@ export const runDetailSchema = z.object({
   tasks: z.array(planTaskSchema),
   approvals: z.array(approvalSchema),
   attempts: z.array(attemptSchema),
+  /** The pinned approved requirements version (Agent 2), if this plan follows one. */
+  requirements: z.nullable(
+    z.object({ versionId: z.string(), sessionId: z.string(), version: z.int(), contentSha256: z.string() }),
+  ),
 });
 export type RunDetail = z.infer<typeof runDetailSchema>;
 
@@ -132,6 +142,12 @@ export const RUN_EVENT_TYPES = [
   'plan.created',
   'approval.requested',
   'approval.decided',
+  // Requirements Analyst sessions share the run event stream.
+  'turn.queued',
+  'turn.completed',
+  'turn.failed',
+  'answers.submitted',
+  'requirements.version-created',
 ] as const;
 
 export const runEventSchema = z.object({

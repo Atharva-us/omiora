@@ -54,11 +54,14 @@ All settings are environment variables, validated at startup by `omniora_api/con
 | `OMNIORA_DATABASE_URL` | none (required) | PostgreSQL only; other databases are rejected. |
 | `OMNIORA_CORS_ORIGINS` | `http://localhost:5173` | Comma-separated. Also used for the Origin check on state-changing requests. |
 | `OMNIORA_MODEL_PROVIDER` | `anthropic` | `anthropic` or `groq`. Chosen explicitly: a key for another provider never switches providers. |
-| `ANTHROPIC_API_KEY` / `GROQ_API_KEY` | none | Server-side only; only the selected provider's key is read. Without it, `POST /projects/{id}/runs` returns 503 `provider-not-configured`. |
+| `ANTHROPIC_API_KEY` / `GROQ_API_KEY` | none | Server-side only; only the selected provider's key is read. Without it, starting a planning run or a requirements session returns 503 `provider-not-configured`. |
 | `OMNIORA_PM_MODEL` / `OMNIORA_PM_EFFORT` / `OMNIORA_PM_MAX_OUTPUT_TOKENS` | per provider: anthropic `claude-opus-5-5` / `high` / `16000`; groq `openai/gpt-oss-120b` / `medium` / `6000` | Model, reasoning effort, and output budget for the Project Manager. Unset values use the provider defaults. |
 | `OMNIORA_PM_MAX_ATTEMPTS` | `3` | Model attempts per plan version (invalid output or transient errors each use one). |
+| `OMNIORA_ANALYST_MAX_OUTPUT_TOKENS` / `OMNIORA_ANALYST_REQUEST_TOKEN_BUDGET` | per provider: anthropic `8000` / `150000`; groq `5000` / `7600` | Requirements Analyst output budget, and the most one request may use (estimated prompt + schema + output). A turn whose prompt would not fit fails with `context-too-large` instead of calling the provider. The analyst uses the same provider, model, and effort as planning. |
+| `OMNIORA_ANALYST_MAX_ATTEMPTS` / `OMNIORA_ANALYST_MAX_TURNS` | `3` / `8` | Model attempts per discovery turn, and question turns per session (revision turns after "request changes" are not capped). |
+| `OMNIORA_ANALYST_TURNS_PER_USER_PER_HOUR` | `30` | Database-backed limit on analyst turns. |
 | `OMNIORA_ANTHROPIC_REFUSAL_FALLBACK` | `true` | Server-side refusal fallback (`fallbacks: "default"`); set `false` to disable. |
-| `OMNIORA_RUNS_PER_USER_PER_HOUR` | `10` | Database-backed limit on starting runs. |
+| `OMNIORA_RUNS_PER_USER_PER_HOUR` | `10` | Database-backed limit on starting runs (planning runs and requirements sessions together). |
 | `OMNIORA_WORKER_LEASE_SECONDS` / `OMNIORA_JOB_MAX_DELIVERIES` | `60` / `3` | Crash recovery window and redelivery bound. |
 
 Secrets are `SecretStr` values, never logged, and never returned by the API. Logs are JSON with key-based
@@ -76,6 +79,11 @@ alembic revision --autogenerate -m "describe change"   # then review the generat
 Applied revisions are never edited; every change gets a new revision. `GET /health/ready` reports 503 until the
 database is at the migration head.
 
+| Revision | Adds |
+| --- | --- |
+| `0001` | Users, sessions, projects, runs, events, jobs, attempts, plans, tasks, approvals, and the append-only audit log. |
+| `0002` | Requirements Analyst: run states `discovering`, `ready-for-review`, `needs-changes`; an `agent_role` check; `discovery_turns` (at most one queued or running turn per session), `discovery_questions`, `discovery_answers` (append-only history, idempotent per submission), `requirements_versions` (a trigger rejects any change to a version's content and makes the freeze and approval stamps write-once); and `runs.pinned_requirements_version_id` / `runs.requirements_skipped` for planning runs. The downgrade refuses to run while requirements sessions exist rather than deleting them. |
+
 ## Tests
 
 The suite needs a **real PostgreSQL** database that it may wipe:
@@ -84,6 +92,8 @@ The suite needs a **real PostgreSQL** database that it may wipe:
 export OMNIORA_TEST_DATABASE_URL=postgresql://postgres@localhost:5432/omniora_test
 pytest                         # everything (database tests are skipped, and reported, without the variable)
 pytest tests/test_runs.py      # durable runs: worker recovery, duplicate delivery, approvals, SSE
+pytest tests/test_requirements_domain.py tests/test_requirements_analyst.py   # Agent 2 contract and agent loop (no database)
+pytest tests/test_requirements_api.py   # Agent 2 sessions, concurrency, recovery, approval, handoff (PostgreSQL)
 ruff check src tests migrations && ruff format --check src tests migrations
 pip-audit                      # dependency advisories
 ```
@@ -123,7 +133,9 @@ How the adapter behaves:
   (honouring `retry-after` up to 60 s). After that, a rate limit waits for `retry-after` (capped at 60 s) before
   the agent's next attempt. Authentication, permission, unknown-model, and oversized requests are permanent and
   not retried. Groq's occasional `json_validate_failed` (its own schema rejection, seen 2 times in 24 live calls
-  despite strict mode) is retried as an invalid output. No path produces a plan without a real, validated model
+  despite strict mode) is retried as an invalid output; when its message says the output ran out of completion
+  tokens (gpt-oss reasoning counts toward them), it is reported as `truncated` instead. Groq's
+  `failed_generation` (the rejected model output) is kept on the attempt for diagnosis. No path produces a plan without a real, validated model
   response.
 
 ## Planning evaluation
@@ -196,19 +208,133 @@ per-run sequence numbers are gap-free and committed in order. `GET /runs/{id}/ev
 `Last-Event-ID` and then polls the database every second. `GET /runs/{id}/events/history?after=N` returns the
 same events as JSON.
 
+## Requirements Analyst (Agent 2)
+
+Agent 2 turns the brief, notes, and the user's answers into a versioned, structured requirements document that the
+user approves before planning. It runs behind the same model interface, provider, and model as the Project
+Manager, and has no tools.
+
+**A session is a run** with `agent_role = "requirements-analyst"`. It reuses the run row lock, event stream
+(`GET /runs/{id}/events`), jobs and leases, attempts, approvals, and the audit chain. Planning and discovery
+share the one-active-run-per-project rule.
+
+```
+queued → discovering ⇄ ready-for-review → awaiting-approval → approved
+                ↑                                  │
+                └──────── needs-changes ←──────────┘   (request changes, with a comment)
+cancelled from any active state; failed is reserved for terminal problems
+```
+
+Transient progress is the latest **turn**'s status (`queued`, `running`, `completed`, `failed`, `cancelled`),
+not a run state. A failed turn never fails the session: every answer is kept, and `POST …/turns/retry` re-queues
+the same turn.
+
+**One turn** (`requirements-turn` job, `worker/discovery.py`):
+
+1. The worker locks the run, moves it to `discovering`, marks the turn `running`, and builds a compact,
+   authoritative summary: the brief, numbered notes, the current version (or the project's last approved
+   version, so ids stay stable across sessions), and every question with its latest answer. It does not resend
+   a growing transcript.
+2. The model returns questions (at most five), requirement operations (`add` / `update` / `deprecate`),
+   assumptions, a readiness claim, and short decision notes. Up to `OMNIORA_ANALYST_MAX_ATTEMPTS` attempts, each
+   persisted, with validation errors fed back.
+3. `domain/requirements.py` validates the output against persisted state, then the server applies it: it
+   assigns `REQ-` ids (never reused; nothing is deleted, only deprecated) and `DQ-` question keys, and builds the
+   next version with a SHA-256 content hash and a parent reference.
+4. The commit is lease-checked, as for planning. Unique `(run, version)` and `(run, question key)` constraints
+   stop a re-delivered job from committing twice. If the version is ready, the session moves to
+   `ready-for-review`.
+
+**Deterministic rules** (an output breaking any of them is rejected and retried):
+
+- No model-assigned ids; no unknown, duplicated, or deprecated targets.
+- `source: answer` must cite `answer:DQ-…` of a question the user actually answered, never an "I don't know".
+  `brief` and `note` sources must cite a real brief field or note number.
+- Inferred requirements cannot have high confidence. An assumption that stands in for an "I don't know" answer
+  must have low confidence.
+- Lowering or deprecating a "must" needs a reason and evidence from the user's answer.
+- No repeated questions; choice questions need 2–8 distinct options; none on the final turn.
+- **Tenancy:** `multi` requires an active "must" requirement tagged `tenant-isolation` with acceptance criteria;
+  `unknown` requires an open blocking question with topic `tenancy`.
+- **Readiness** is recomputed: no unanswered blocking question, every blocking "I don't know" covered by a
+  low-confidence assumption, tenancy known, at least one must-have. A false `ready` claim is rejected.
+
+**Answers and approval.** Answers are append-only (the newest row is current) and validated against the question's
+kind. Each submission has an `Idempotency-Key`; a replay applies nothing. Answers cannot change while a turn is
+queued or running, and changing one after readiness reopens discovery, so a stale version can never be submitted.
+`submit` freezes the latest ready version and opens a `requirements` approval. Approval stamps the version
+(immutable from then on); "request changes" requires a comment and queues a revision turn.
+
+**Handoff to Agent 1.** `POST /projects/{id}/runs` pins the project's latest approved version to the planning run
+(`pinned_requirements_version_id`). The planning worker reloads that version, verifies its hash, and gives the
+Project Manager the exact approved requirements. The plan then references their `REQ-` ids instead of restating
+them; its own additions use `D1`, `D2`, … (source `inferred`). `plan_problems` rejects unknown or deprecated ids,
+restated approved requirements, and any approved must-have that no task covers and that is not listed in
+`flagged_requirements` with a reason. Without approved requirements, planning returns `409` unless the request
+sets `withoutRequirements: true`. That choice is stored on the run (`requirements_skipped`) and shown in the UI.
+
+### Requirements Analyst evaluation
+
+`python -m omniora_api.evals --agent requirements` grades six stored fixtures (`evals/discovery_fixtures/`): a
+vague brief, a multi-tenant SaaS, contradictory answers, a clear project, an "I don't know" answer to a critical
+question, and a validator fixture (an invented answer). Each stores the persisted state a turn would see, and a
+**hand-authored reference output, not model output**. Graders run the production validator, then structured
+checks (readiness, tenancy, question counts and topics, how unknown answers were handled). The only text check is
+that a tenant-isolation requirement's criteria express denial, against a keyword list fixed in the fixture.
+Stored: 6/6. Add `--live` for real model calls, and `--fixture <name>` to re-check one scenario.
+
+#### Live results: Groq `openai/gpt-oss-120b`, 2026-10-29
+
+Effort `medium`, at most 3 attempts per fixture, through the production agent code (not the API or worker). Each
+round is a single sample.
+
+| Round | Analyst output budget | Fixtures | Passed all checks | Model calls | Tokens reported (in / out) |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 3,000 | 5 | 2/5 (contradictory-answers, unknown-critical-answer) | 11 | 15,496 / 13,801 |
+| 2 | 5,000 | multi-tenant-saas | 0/1 | 3 | none reported |
+| 3 | 5,000, allowed tags listed in the prompt | multi-tenant-saas | 0/1 | 3 | 1,802 / 2,975 |
+
+- **multi-tenant-saas never produced an accepted output.** In round 1, all three attempts were rejected by Groq's
+  own schema check. One diagnostic call showed why: the hidden reasoning counts toward `max_completion_tokens`,
+  and the 3,000-token budget ran out after about 700 visible tokens. Groq reports that as `json_validate_failed`.
+  Fixes: the Groq analyst budget is now 5,000, and the adapter reports this case as `truncated`. In round 2, Groq
+  still rejected all three attempts, now as a real schema mismatch. The truncated output had also used a tag
+  outside the allowed list (`payment`), so the prompt now lists the allowed tags. In round 3, one attempt produced
+  a complete output, which our validator rejected because an inferred requirement claimed high confidence. The
+  other two were still rejected by Groq. **The cause of those remaining rejections is not confirmed.** The adapter
+  now keeps Groq's `failed_generation` on the attempt, and the analyst feeds its own validation of that output
+  back on the next attempt, so the next live run can be diagnosed.
+- **vague-brief (failed):** the output was valid, but the analyst asked only a blocking tenancy question, not
+  about users or core features, and put guessed personas into low-confidence assumptions. The prompt now says
+  the tenancy question comes in addition to, not instead of, the questions about users and features. That has
+  not been re-verified live.
+- **clear-project (failed):** the output was valid, but the analyst asked a blocking question about deployment
+  and so did not declare readiness, while the fixture expects no blocking questions. Left failing; the grader was
+  not changed.
+- **Validator catches in live output** (each rejected and retried): evidence `inferred` used as a citation;
+  withdrawing questions that were already answered; re-asking a question the user had answered "I don't know";
+  an inferred requirement with high confidence.
+- **Usage:** 18 live calls in total (17 evaluation calls plus 1 diagnostic call), with 17.3K input and 16.8K
+  output tokens reported. Nine calls rejected by Groq reported no usage, although they consumed quota. Latency
+  per call was 2 to 37 s. No rate-limit errors occurred. Cost is not reported, because pricing depends on the
+  account's plan.
+- **Not run live:** the full API + worker + Groq path for discovery and planning from approved requirements. The
+  day's token allowance was nearly used up. That path is verified with the scripted provider, against real
+  PostgreSQL (`tests/test_requirements_api.py`) and in a real browser against the real API.
+
 ## Security boundaries
 
 | Area | Implementation |
 | --- | --- |
 | Identity | Email and password accounts; Argon2id hashes; random 256-bit session tokens in `HttpOnly; SameSite=Lax` cookies (`Secure` in production); only SHA-256 digests stored; server-side revocation on sign-out; 14-day expiry. |
-| Authorization | Every project and run query is scoped to the owner; other users' resources return 404. |
+| Authorization | Every project, run, and requirements-session query is scoped to the owner; other users' resources return 404. |
 | CSRF | State-changing requests need `X-Omniora-Client: web`; an `Origin` header, when present, must be allow-listed. |
 | CORS | Explicit origins with credentials; `*` is rejected in production. |
 | Input | Pydantic models with `extra="forbid"` and length limits, a 64 KiB body limit, UUID path validation, and domain rules mirrored from the frontend. |
-| Abuse | Runs: per-user hourly limit from the database. Sign-in: per-IP+email sliding window (in-process). |
+| Abuse | Runs and analyst turns: per-user hourly limits from the database. Sign-in: per-IP+email sliding window (in-process). |
 | Audit | Hash-chained `audit_log`; a database trigger rejects UPDATE and DELETE; `verify_audit_chain()` detects storage-level tampering. |
 | Errors | `{"error": {"code", "message", "details"}}` with safe messages only; stack traces are logged, never returned. |
-| Model | Credentials server-side only; project data is wrapped as delimited data in the prompt; outputs are validated before persistence; the agent has no tools. |
+| Model | Credentials server-side only; project data and answers are wrapped as delimited data in the prompt; outputs are validated against persisted state before anything is stored; neither agent has tools. |
 
 ## Known limitations
 
@@ -223,6 +349,14 @@ same events as JSON.
   signatures and a fake client.
 - **Plan quality is good, not perfect:** in the latest live round, 4/5 evaluation fixtures pass every check. Read
   the plan before approving it; the approval gate exists for this reason.
+- **Requirements Analyst is not yet reliable live:** 2/5 evaluation fixtures pass on Groq, and the multi-tenant
+  fixture has not produced an accepted output (see Requirements Analyst evaluation). Review the questions and
+  requirements before approving; the approval gate exists for this reason.
+- **Requirements Analyst limits.** The validator checks structure and evidence, not meaning: it cannot tell
+  whether a question is a paraphrase of one already answered (only exact repeats are rejected), or whether a
+  tenant-isolation criterion really proves denial (the evaluation grader checks that wording; the validator only
+  requires the tag, priority, and criteria). Token counts for the request budget are estimated (characters ÷ 3),
+  not measured. A session is capped at `OMNIORA_ANALYST_MAX_TURNS` question turns.
 - **Cross-site deployments** (frontend and API on different registrable domains) are not supported by the
   `SameSite=Lax` cookie.
 - The health check reads migrations from the source tree, so the API must run from a checkout or an editable

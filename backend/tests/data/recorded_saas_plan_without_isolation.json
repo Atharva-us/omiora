@@ -1,0 +1,374 @@
+{
+  "source": "recorded groq openai/gpt-oss-120b output (effort medium), live evaluation round 3, 2026-10-29",
+  "fixture": "fullstack-saas",
+  "plan": {
+    "summary": "Pulse Analytics is a SaaS analytics platform for small teams, providing a web dashboard and companion mobile app that let workspace owners manage members, view analytics, handle subscription billing, and receive real‑time alerts. Users include workspace owners and their invited members (viewer or editor).",
+    "requirements": [
+      {
+        "id": "R1",
+        "statement": "Users can authenticate securely via email/password and OAuth providers",
+        "kind": "functional",
+        "priority": "must",
+        "source": "user"
+      },
+      {
+        "id": "R2",
+        "statement": "All persistent data is stored in a PostgreSQL database",
+        "kind": "functional",
+        "priority": "must",
+        "source": "user"
+      },
+      {
+        "id": "R3",
+        "statement": "The system supports subscription billing for workspaces",
+        "kind": "functional",
+        "priority": "must",
+        "source": "user"
+      },
+      {
+        "id": "R4",
+        "statement": "Workspace owners have an admin dashboard to manage members, roles, and billing",
+        "kind": "functional",
+        "priority": "must",
+        "source": "user"
+      },
+      {
+        "id": "R5",
+        "statement": "Users receive real‑time alerts via push notifications on the mobile app",
+        "kind": "functional",
+        "priority": "must",
+        "source": "user"
+      },
+      {
+        "id": "R6",
+        "statement": "Workspace owners can invite members and assign viewer or editor roles",
+        "kind": "functional",
+        "priority": "must",
+        "source": "user"
+      },
+      {
+        "id": "R7",
+        "statement": "Authenticated users can view analytics dashboards in the web UI",
+        "kind": "functional",
+        "priority": "must",
+        "source": "inferred"
+      },
+      {
+        "id": "R8",
+        "statement": "The codebase includes automated unit, integration, and end‑to‑end tests",
+        "kind": "functional",
+        "priority": "must",
+        "source": "user"
+      },
+      {
+        "id": "R9",
+        "statement": "The application meets basic security standards (input validation, data encryption at rest and in transit)",
+        "kind": "non-functional",
+        "priority": "should",
+        "source": "inferred"
+      }
+    ],
+    "assumptions": [
+      "We will use Stripe as the payment provider unless otherwise specified",
+      "Push notifications will be delivered via Firebase Cloud Messaging",
+      "The analytics data to be displayed is supplied via an external API not in scope of this release",
+      "Deployment will target a Linux‑based cloud VM or container platform (e.g., AWS, GCP, Azure)"
+    ],
+    "open_questions": [
+      {
+        "id": "Q1",
+        "question": "Which payment provider should be used for subscription billing?",
+        "why_it_matters": "The choice influences backend integration, compliance, and cost",
+        "blocking": true
+      },
+      {
+        "id": "Q2",
+        "question": "What notification channels are required (push, email, SMS)?",
+        "why_it_matters": "Determines third‑party services and data flow for alerts",
+        "blocking": true
+      },
+      {
+        "id": "Q3",
+        "question": "Which authentication methods are required (email/password, Google OAuth, SSO, etc.)?",
+        "why_it_matters": "Impacts user experience, security architecture, and third‑party dependencies",
+        "blocking": true
+      },
+      {
+        "id": "Q4",
+        "question": "What are the primary sources/formats of analytics data that the dashboard will display?",
+        "why_it_matters": "Affects data ingestion, storage, and API design",
+        "blocking": true
+      },
+      {
+        "id": "Q5",
+        "question": "What are the expected limits for team size and workspace count per subscription tier?",
+        "why_it_matters": "Guides database sizing, rate limiting, and pricing tiers",
+        "blocking": false
+      },
+      {
+        "id": "Q6",
+        "question": "Which cloud provider or hosting environment will be used for production deployment?",
+        "why_it_matters": "Influences CI/CD pipelines, infrastructure as code, and cost estimates",
+        "blocking": true
+      }
+    ],
+    "recommended_stack": {
+      "technologies": [
+        "nextjs",
+        "flutter",
+        "fastapi",
+        "postgresql"
+      ],
+      "rationale": "Next.js provides a full‑stack React framework ideal for the web dashboard and server‑side rendering; Flutter enables a single codebase for iOS/Android alerts; FastAPI offers rapid development of a Python‑based REST API that integrates cleanly with PostgreSQL; PostgreSQL is a reliable relational store that works natively with FastAPI and supports complex queries needed for analytics and billing."
+    },
+    "tasks": [
+      {
+        "key": "T1",
+        "title": "Requirements Gathering",
+        "description": "Collaborate with stakeholders to produce a detailed functional specification covering authentication, billing, workspace management, notifications, and deployment constraints.",
+        "acceptance_criteria": [
+          "Specification document approved by product owner",
+          "All open questions (Q1‑Q6) are answered or documented as out‑of‑scope"
+        ],
+        "depends_on": [],
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R3",
+          "R4",
+          "R5",
+          "R6",
+          "R7",
+          "R8",
+          "R9"
+        ],
+        "suggested_agent": "requirements-analyst"
+      },
+      {
+        "key": "T2",
+        "title": "Reference Architecture Design",
+        "description": "Create an architecture diagram, component breakdown, and technology justification based on the approved specification and recommended stack.",
+        "acceptance_criteria": [
+          "Architecture diagram reviewed and signed off",
+          "Component responsibilities mapped to stack choices"
+        ],
+        "depends_on": [
+          "T1"
+        ],
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R3",
+          "R4",
+          "R5",
+          "R6",
+          "R7",
+          "R8",
+          "R9"
+        ],
+        "suggested_agent": "software-architect"
+      },
+      {
+        "key": "T3",
+        "title": "Setup Development Infrastructure",
+        "description": "Initialize monorepo, CI/CD pipeline, and code quality tooling to support automated testing and secure builds.",
+        "acceptance_criteria": [
+          "Git repository with protected branches",
+          "CI pipeline runs lint, tests, and builds on every PR"
+        ],
+        "depends_on": [
+          "T2"
+        ],
+        "requirement_ids": [
+          "R8"
+        ],
+        "suggested_agent": "backend-engineer"
+      },
+      {
+        "key": "T4",
+        "title": "Implement Backend API",
+        "description": "Develop FastAPI services exposing endpoints for authentication, workspace management, billing, and notifications.",
+        "acceptance_criteria": [
+          "All core endpoints documented with OpenAPI",
+          "Endpoints pass unit and integration tests"
+        ],
+        "depends_on": [
+          "T3"
+        ],
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R3",
+          "R5",
+          "R6",
+          "R7"
+        ],
+        "suggested_agent": "backend-engineer"
+      },
+      {
+        "key": "T5",
+        "title": "Design Database Schema",
+        "description": "Create PostgreSQL schema for users, workspaces, roles, subscriptions, and alert records.",
+        "acceptance_criteria": [
+          "ER diagram approved",
+          "Migrations generated and applied without errors"
+        ],
+        "depends_on": [
+          "T3"
+        ],
+        "requirement_ids": [
+          "R2",
+          "R3",
+          "R6",
+          "R7"
+        ],
+        "suggested_agent": "database-engineer"
+      },
+      {
+        "key": "T6",
+        "title": "Build Web Frontend",
+        "description": "Using Next.js, implement login, analytics dashboard, workspace admin UI, and billing pages.",
+        "acceptance_criteria": [
+          "Responsive UI passes manual usability test",
+          "All UI actions trigger correct API calls"
+        ],
+        "depends_on": [
+          "T4",
+          "T5"
+        ],
+        "requirement_ids": [
+          "R1",
+          "R4",
+          "R5",
+          "R6",
+          "R7",
+          "R3"
+        ],
+        "suggested_agent": "frontend-engineer"
+      },
+      {
+        "key": "T7",
+        "title": "Develop Mobile App",
+        "description": "Using Flutter, create login flow, push‑notification handling, and an alerts screen for real‑time notifications.",
+        "acceptance_criteria": [
+          "App builds for iOS and Android",
+          "Push notifications received on device"
+        ],
+        "depends_on": [
+          "T4",
+          "T5"
+        ],
+        "requirement_ids": [
+          "R1",
+          "R5",
+          "R7",
+          "R8"
+        ],
+        "suggested_agent": "mobile-engineer"
+      },
+      {
+        "key": "T8",
+        "title": "Integrate Payment Provider",
+        "description": "Connect the backend to the chosen payment gateway to handle subscription creation, upgrades, and cancellations.",
+        "acceptance_criteria": [
+          "End‑to‑end subscription flow works in sandbox mode",
+          "Web UI reflects subscription status"
+        ],
+        "depends_on": [
+          "T4"
+        ],
+        "requirement_ids": [
+          "R3"
+        ],
+        "suggested_agent": "backend-engineer"
+      },
+      {
+        "key": "T9",
+        "title": "Setup Notification Service",
+        "description": "Configure Firebase Cloud Messaging (or chosen service) to send alert push notifications from the backend.",
+        "acceptance_criteria": [
+          "Backend can send test push and device receives it",
+          "Notification payload conforms to spec"
+        ],
+        "depends_on": [
+          "T4"
+        ],
+        "requirement_ids": [
+          "R5"
+        ],
+        "suggested_agent": "backend-engineer"
+      },
+      {
+        "key": "T10",
+        "title": "Write Automated Tests",
+        "description": "Create comprehensive unit, integration, and end‑to‑end tests covering all must‑have functionality.",
+        "acceptance_criteria": [
+          "Test suite achieves ≥80% coverage",
+          "All tests pass in CI pipeline"
+        ],
+        "depends_on": [
+          "T6",
+          "T7",
+          "T8",
+          "T9"
+        ],
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R3",
+          "R4",
+          "R5",
+          "R6",
+          "R7",
+          "R8"
+        ],
+        "suggested_agent": "qa-debugging"
+      },
+      {
+        "key": "T11",
+        "title": "Security Review",
+        "description": "Perform a security audit covering authentication, data encryption, and OWASP top‑10 risks.",
+        "acceptance_criteria": [
+          "No critical findings; all high‑risk issues mitigated"
+        ],
+        "depends_on": [
+          "T10"
+        ],
+        "requirement_ids": [
+          "R9"
+        ],
+        "suggested_agent": "security-release"
+      },
+      {
+        "key": "T12",
+        "title": "Release Preparation",
+        "description": "Create deployment scripts, configure production environment, and perform a final sanity check before launch.",
+        "acceptance_criteria": [
+          "One‑click deployment to staging succeeds",
+          "Rollback procedure documented"
+        ],
+        "depends_on": [
+          "T11"
+        ],
+        "requirement_ids": [
+          "R9"
+        ],
+        "suggested_agent": "security-release"
+      }
+    ],
+    "required_approvals": [
+      {
+        "gate": "plan",
+        "description": "Approval of the overall project plan"
+      },
+      {
+        "gate": "architecture",
+        "description": "Sign‑off on the reference architecture before implementation begins"
+      },
+      {
+        "gate": "release",
+        "description": "Final go‑no‑go decision prior to production deployment"
+      }
+    ]
+  }
+}

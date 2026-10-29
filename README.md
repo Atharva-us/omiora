@@ -7,10 +7,11 @@ An AI-powered software engineering platform that transforms ideas into complete,
 This repository holds the React frontend and, in `backend/`, the FastAPI service. The frontend runs in two modes:
 
 - **Demo mode:** no backend; projects are stored in your browser and no agent runs.
-- **API mode:** accounts, PostgreSQL persistence, and **Agent 1 (Project Manager)**, which drafts a plan that you
-  approve, revise, or reject.
+- **API mode:** accounts, PostgreSQL persistence, **Agent 2 (Requirements Analyst)**, which asks focused questions
+  and keeps versioned requirements for you to approve, and **Agent 1 (Project Manager)**, which drafts a plan from
+  those approved requirements that you approve, revise, or reject.
 
-No code is generated or executed yet. Agents 2–10 are planned, not built. The in-app `/status` page and
+No code is generated or executed yet. Agents 3–10 are planned, not built. The in-app `/status` page and
 [What is real today](#what-is-real-today) list exactly what works.
 
 ## Getting started
@@ -113,9 +114,10 @@ Read next:
 | --- | --- | --- |
 | Project wizard, dashboard, workspace | Real; stored in this browser | Real; stored in PostgreSQL per account |
 | Accounts | Not available (sign-in honestly fails) | Email and password, HttpOnly session cookie; no email verification or password reset yet |
-| Project Manager agent | Not available (explained in the Plan tab) | Real: validated plan, open questions, proposed tasks, approve / revise / reject, live persisted events. Requires a model provider on the server (`OMNIORA_MODEL_PROVIDER` with `ANTHROPIC_API_KEY` or `GROQ_API_KEY`); validated live on Groq `openai/gpt-oss-120b`. |
+| Requirements Analyst agent | Not available (explained in the Requirements tab) | Real: adaptive questions with "I don't know", versioned requirements with server-assigned ids, readiness checks, approval, and a pinned handoff to planning. Requires a model provider on the server. |
+| Project Manager agent | Not available (explained in the Plan tab) | Real: validated plan pinned to approved requirements (or an explicit, labelled skip), open questions, proposed tasks, approve / revise / reject, live persisted events. Requires a model provider on the server (`OMNIORA_MODEL_PROVIDER` with `ANTHROPIC_API_KEY` or `GROQ_API_KEY`); validated live on Groq `openai/gpt-oss-120b`. |
 | Sample projects | Fixed, labelled "Demo data", read-only | Same |
-| Agents 2–10, code generation, sandbox, build, tests, repair, ZIP export, deploy | Not built | Not built (approving a plan executes nothing) |
+| Agents 3–10, code generation, sandbox, build, tests, repair, ZIP export, deploy | Not built | Not built (approving a plan executes nothing) |
 
 ## Security notes
 

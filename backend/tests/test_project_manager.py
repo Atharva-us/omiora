@@ -142,3 +142,12 @@ class TestAttemptLoop:
             before_attempt=lambda _: False,
         )
         assert result.failure_code == "interrupted" and result.attempts == []
+
+
+def test_prompt_requires_tenant_isolation_for_shared_deployments() -> None:
+    from omniora_api.agents.project_manager import SYSTEM_PROMPT
+
+    prompt = " ".join(SYSTEM_PROMPT.split())
+    assert "share one deployment" in prompt
+    assert "each one's data is isolated from the others" in prompt
+    assert "prove that cross-tenant access is denied" in prompt

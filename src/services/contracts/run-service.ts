@@ -17,7 +17,7 @@ export interface DecisionInput {
 }
 
 /**
- * Agent runs (Project Manager planning only, in this phase).
+ * Project Manager planning runs.
  *
  * Events are notifications, and `getRun` is the source of truth: clients
  * re-fetch the run detail after events or reconnects to reconcile state.
@@ -29,8 +29,12 @@ export interface RunService {
   readonly available: boolean;
   listRuns(projectId: string): Promise<Run[]>;
   getRun(runId: string): Promise<RunDetail>;
-  /** Reusing an idempotency key returns the original run instead of starting another. */
-  startPlanning(projectId: string, idempotencyKey: string): Promise<Run>;
+  /**
+   * Reusing an idempotency key returns the original run instead of starting another. Planning
+   * follows the project's approved requirements; `withoutRequirements` is the explicit, recorded
+   * choice to skip them (otherwise a project without approved requirements gets `conflict`).
+   */
+  startPlanning(projectId: string, idempotencyKey: string, options?: { withoutRequirements?: boolean }): Promise<Run>;
   cancel(runId: string): Promise<Run>;
   decide(runId: string, approvalId: string, input: DecisionInput): Promise<Approval>;
   listEvents(runId: string, afterSeq: number): Promise<RunEvent[]>;

@@ -5,16 +5,26 @@ Validation has two layers:
 2. Semantics: `plan_problems()` checks things a schema cannot express: unique ids, resolvable
    references, an acyclic dependency graph, requirement coverage, and stack rules.
 A plan is accepted only if both pass.
+
+When the run is pinned to approved requirements (Agent 2's output), the plan references their
+`REQ-` ids instead of restating them: its own `requirements` hold only derived additions (`D1`,
+`D2`, ...), and every approved must-have is covered by a task or flagged with a reason.
 """
 
 from __future__ import annotations
 
+import re
 from collections import deque
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .projects import CustomStack, ProjectConfiguration, TechnologyId, validate_technologies
+
+if TYPE_CHECKING:
+    from .requirements import ApprovedRequirements
+
+DERIVED_ID = re.compile(r"^D\d+$")
 
 # Agents 2-10. The Project Manager never assigns work to itself.
 FutureAgentRole = Literal[
@@ -67,6 +77,11 @@ class PlanTask(_Strict):
     suggested_agent: FutureAgentRole
 
 
+class FlaggedRequirement(_Strict):
+    id: Key = Field(min_length=1, max_length=16)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class RequiredApproval(_Strict):
     gate: Literal["plan", "architecture", "release"]
     description: str = Field(min_length=1, max_length=500)
@@ -74,12 +89,14 @@ class RequiredApproval(_Strict):
 
 class ProjectPlan(_Strict):
     summary: str = Field(min_length=1, max_length=2000)
-    requirements: list[PlanRequirement] = Field(min_length=1, max_length=50)
+    requirements: list[PlanRequirement] = Field(max_length=50)
     assumptions: list[str] = Field(max_length=30)
     open_questions: list[OpenQuestion] = Field(max_length=20)
     recommended_stack: RecommendedStack
     tasks: list[PlanTask] = Field(min_length=1, max_length=40)
     required_approvals: list[RequiredApproval] = Field(min_length=1, max_length=5)
+    # Approved must-have requirements this plan deliberately leaves uncovered, each with a reason.
+    flagged_requirements: list[FlaggedRequirement] = Field(default_factory=list, max_length=50)
 
 
 def _string_array() -> dict[str, object]:
@@ -153,6 +170,10 @@ def plan_output_schema() -> dict[str, object]:
                     }
                 ),
             },
+            "flagged_requirements": {
+                "type": "array",
+                "items": _object({"id": {"type": "string"}, "reason": {"type": "string"}}),
+            },
         }
     )
 
@@ -190,11 +211,57 @@ def find_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
     return sorted(key for key, degree in indegree.items() if degree > 0)
 
 
-def plan_problems(plan: ProjectPlan, configuration: ProjectConfiguration) -> list[str]:
+def _approved_problems(plan: ProjectPlan, approved: ApprovedRequirements) -> tuple[list[str], set[str]]:
+    """Rules for a plan pinned to approved requirements. Returns (problems, referencable ids)."""
+    problems: list[str] = []
+    active = {r.id for r in approved.document.active()}
+    deprecated = {r.id for r in approved.document.requirements} - active
+    for requirement in plan.requirements:
+        if not DERIVED_ID.match(requirement.id):
+            problems.append(
+                f"Requirement {requirement.id!r}: approved requirements are referenced by their REQ- ids, never "
+                "restated; your own additions use ids D1, D2, ..."
+            )
+        elif requirement.source != "inferred":
+            problems.append(f"Derived requirement {requirement.id!r} must have source 'inferred'.")
+    covered = {requirement_id for task in plan.tasks for requirement_id in task.requirement_ids}
+    for task in plan.tasks:
+        for requirement_id in task.requirement_ids:
+            if requirement_id in deprecated:
+                problems.append(f"Task {task.key!r} references deprecated requirement {requirement_id!r}.")
+    flagged_ids = [flag.id for flag in plan.flagged_requirements]
+    for duplicate in _duplicates(flagged_ids):
+        problems.append(f"Requirement {duplicate!r} is flagged more than once.")
+    for flag in plan.flagged_requirements:
+        if flag.id not in active:
+            problems.append(f"flagged_requirements names {flag.id!r}, which is not an active approved requirement.")
+        elif not flag.reason.strip():
+            problems.append(f"Flagged requirement {flag.id!r} needs a reason.")
+    for requirement_id in sorted(approved.must_ids()):
+        if requirement_id not in covered and requirement_id not in flagged_ids:
+            problems.append(
+                f"Approved must-have requirement {requirement_id!r} is neither covered by a task nor flagged with "
+                "a reason."
+            )
+    return problems, active
+
+
+def plan_problems(
+    plan: ProjectPlan, configuration: ProjectConfiguration, approved: ApprovedRequirements | None = None
+) -> list[str]:
     """Semantic problems with a shape-valid plan. Empty means the plan is acceptable."""
     problems: list[str] = []
     task_keys = [task.key for task in plan.tasks]
     requirement_ids = [requirement.id for requirement in plan.requirements]
+    approved_ids: set[str] = set()
+    if approved is not None:
+        approved_problems, approved_ids = _approved_problems(plan, approved)
+        problems += approved_problems
+    else:
+        if not plan.requirements:
+            problems.append("At least one requirement is required.")
+        if plan.flagged_requirements:
+            problems.append("flagged_requirements is only used when the plan is based on approved requirements.")
 
     for label, values in (
         ("task key", task_keys),
@@ -205,7 +272,7 @@ def plan_problems(plan: ProjectPlan, configuration: ProjectConfiguration) -> lis
             problems.append(f"Duplicate {label} {duplicate!r}.")
 
     known_tasks = set(task_keys)
-    known_requirements = set(requirement_ids)
+    known_requirements = set(requirement_ids) | approved_ids
     for task in plan.tasks:
         if task.key in task.depends_on:
             problems.append(f"Task {task.key!r} depends on itself.")

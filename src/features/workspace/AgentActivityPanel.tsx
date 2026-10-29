@@ -35,7 +35,7 @@ export function AgentActivityPanel({ run }: { run: ProjectRun }) {
             <p className="mt-2 text-sm font-medium text-ink">No agent activity</p>
             <p className="mt-1 text-xs leading-relaxed text-muted">
               {run.available
-                ? 'Start planning from the Plan tab. Activity recorded by the server appears here.'
+                ? 'Planning activity recorded by the server appears here. Start with the Requirements tab.'
                 : 'Agent runs need API mode. Nothing is simulated here.'}
             </p>
           </div>
@@ -55,7 +55,7 @@ export function AgentActivityPanel({ run }: { run: ProjectRun }) {
         <h3 className="mt-6 text-[0.6875rem] font-semibold tracking-[0.12em] text-faint uppercase">Agents</h3>
         <ul className="mt-2 space-y-1">
           {AGENT_ROLES.map((role) => {
-            const live = role === 'project-manager' && run.available;
+            const live = (role === 'project-manager' || role === 'requirements-analyst') && run.available;
             return (
               <li key={role} className="flex items-center gap-3 rounded-md px-2 py-2">
                 <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${live ? 'bg-success' : 'bg-line'}`} />
