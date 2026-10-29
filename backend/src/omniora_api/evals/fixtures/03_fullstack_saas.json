@@ -1,0 +1,61 @@
+{
+  "name": "fullstack-saas",
+  "description": "Multi-platform SaaS with a requested stack recommendation; the plan must recommend a compatible stack and cover billing, roles, and automated tests.",
+  "input": {
+    "configuration": {
+      "name": "Pulse Analytics",
+      "description": "SaaS analytics dashboard for small teams with workspaces, subscription billing, and a companion mobile app for alerts.",
+      "platform": "both",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": {
+        "features": ["authentication", "database", "payments", "admin-dashboard", "notifications", "automated-tests"],
+        "custom": "Workspace owners can invite members with viewer or editor roles."
+      }
+    },
+    "notes": []
+  },
+  "candidate": {
+    "source": "hand-authored reference plan (not model output)",
+    "output": {
+      "summary": "A multi-tenant analytics SaaS: a Next.js web dashboard and a Flutter mobile app for alerts, backed by PostgreSQL, with workspaces, roles, subscription billing, and automated tests.",
+      "requirements": [
+        { "id": "R1", "statement": "Users sign in and belong to one or more workspaces.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R2", "statement": "Workspace owners invite members as viewers or editors.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R3", "statement": "Workspaces pay a monthly subscription.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R4", "statement": "Users view dashboards of their metrics on the web.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R5", "statement": "Users receive metric alerts on the mobile app.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R6", "statement": "Every workspace's data is isolated from other workspaces.", "kind": "constraint", "priority": "must", "source": "inferred" },
+        { "id": "R7", "statement": "Automated tests run in CI for web, API, and mobile.", "kind": "non-functional", "priority": "must", "source": "user" }
+      ],
+      "assumptions": ["Metrics arrive through a documented ingestion API."],
+      "open_questions": [
+        { "id": "Q1", "question": "Which pricing tiers and trial terms should billing support?", "why_it_matters": "Shapes the subscription model and billing integration.", "blocking": true },
+        { "id": "Q2", "question": "What metric sources must be supported at launch?", "why_it_matters": "Determines ingestion scope.", "blocking": false }
+      ],
+      "recommended_stack": { "technologies": ["nextjs", "flutter", "postgresql"], "rationale": "Next.js serves the SEO-friendly marketing site, dashboard, and API routes; Flutter covers iOS and Android alerts from one codebase; PostgreSQL row-level security supports workspace isolation." },
+      "tasks": [
+        { "key": "T1", "title": "Multi-tenant schema", "description": "Workspaces, memberships, roles, and row-level isolation.", "acceptance_criteria": ["Cross-workspace reads are denied in tests"], "depends_on": [], "requirement_ids": ["R1", "R2", "R6"], "suggested_agent": "database-engineer" },
+        { "key": "T2", "title": "Auth, workspaces, and invitations", "description": "Sign-in, workspace switching, and role-based invitations.", "acceptance_criteria": ["An owner invites a viewer who cannot edit"], "depends_on": ["T1"], "requirement_ids": ["R1", "R2"], "suggested_agent": "backend-engineer" },
+        { "key": "T3", "title": "Subscription billing", "description": "Plans, checkout, and webhook-driven subscription status.", "acceptance_criteria": ["A test subscription activates a workspace"], "depends_on": ["T2"], "requirement_ids": ["R3"], "suggested_agent": "backend-engineer" },
+        { "key": "T4", "title": "Web dashboard", "description": "Metric charts and admin settings.", "acceptance_criteria": ["Dashboards render seeded metrics"], "depends_on": ["T2"], "requirement_ids": ["R4"], "suggested_agent": "frontend-engineer" },
+        { "key": "T5", "title": "Mobile alerts app", "description": "Flutter app receiving push alerts.", "acceptance_criteria": ["An alert reaches a test device"], "depends_on": ["T2"], "requirement_ids": ["R5"], "suggested_agent": "mobile-engineer" },
+        { "key": "T6", "title": "Automated test suites in CI", "description": "Unit, API, and end-to-end tests for web and mobile.", "acceptance_criteria": ["CI runs all suites on every change"], "depends_on": ["T3", "T4", "T5"], "requirement_ids": ["R7"], "suggested_agent": "qa-debugging" }
+      ],
+      "required_approvals": [
+        { "gate": "plan", "description": "Approve scope." },
+        { "gate": "architecture", "description": "Approve the tenancy and billing architecture before implementation." }
+      ]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "coverage": [
+      { "topic": "billing", "keywords": ["subscription", "billing"] },
+      { "topic": "roles (custom requirement)", "keywords": ["role", "viewer"] },
+      { "topic": "tenant isolation", "keywords": ["isolat"] },
+      { "topic": "automated tests", "keywords": ["test"] }
+    ],
+    "questions": [{ "topic": "pricing", "keywords": ["pricing", "tier"] }]
+  }
+}

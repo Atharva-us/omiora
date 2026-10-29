@@ -1,0 +1,50 @@
+{
+  "name": "flutter-mobile-app",
+  "description": "Flutter fitness tracker; the plan must cover offline workout logging (from notes), notifications, and accounts, and ask about health-data handling.",
+  "input": {
+    "configuration": {
+      "name": "Stride Fitness",
+      "description": "Cross-platform fitness tracking app with workout logging and progress charts.",
+      "platform": "mobile",
+      "referenceUrl": "",
+      "stack": { "mode": "custom", "technologies": ["flutter", "fastapi", "postgresql"] },
+      "requirements": { "features": ["authentication", "database", "notifications"], "custom": "" }
+    },
+    "notes": ["Workouts must be loggable offline and sync when the phone reconnects."]
+  },
+  "candidate": {
+    "source": "hand-authored reference plan (not model output)",
+    "output": {
+      "summary": "A Flutter app for iOS and Android to log workouts offline, sync them to a FastAPI backend, view progress charts, and receive reminder notifications.",
+      "requirements": [
+        { "id": "R1", "statement": "Users can sign up and sign in on the mobile app.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R2", "statement": "Users can log workouts while offline; entries sync when connectivity returns.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R3", "statement": "Users see progress charts for logged workouts.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R4", "statement": "Users receive push notification reminders.", "kind": "functional", "priority": "should", "source": "user" }
+      ],
+      "assumptions": ["Last-write-wins is acceptable for conflicting edits of the same workout."],
+      "open_questions": [
+        { "id": "Q1", "question": "Will the app read from or write to Apple Health or Google Fit?", "why_it_matters": "Health data integrations change permissions, privacy obligations, and scope.", "blocking": true },
+        { "id": "Q2", "question": "Where may personal health data be stored and for how long?", "why_it_matters": "Determines data retention and privacy compliance requirements.", "blocking": true }
+      ],
+      "recommended_stack": { "technologies": [], "rationale": "" },
+      "tasks": [
+        { "key": "T1", "title": "Backend schema and API", "description": "FastAPI endpoints and PostgreSQL schema for users and workouts.", "acceptance_criteria": ["CRUD endpoints covered by tests"], "depends_on": [], "requirement_ids": ["R1", "R2"], "suggested_agent": "backend-engineer" },
+        { "key": "T2", "title": "Offline store and sync", "description": "Local database on device with a sync queue and retry when online.", "acceptance_criteria": ["Workouts logged in airplane mode appear on the server after reconnecting"], "depends_on": ["T1"], "requirement_ids": ["R2"], "suggested_agent": "mobile-engineer" },
+        { "key": "T3", "title": "Authentication screens", "description": "Sign-up and sign-in in the Flutter app.", "acceptance_criteria": ["A user can register and sign in"], "depends_on": ["T1"], "requirement_ids": ["R1"], "suggested_agent": "mobile-engineer" },
+        { "key": "T4", "title": "Progress charts", "description": "Weekly and monthly charts from local data.", "acceptance_criteria": ["Charts render with sample data"], "depends_on": ["T2"], "requirement_ids": ["R3"], "suggested_agent": "mobile-engineer" },
+        { "key": "T5", "title": "Push notification reminders", "description": "Scheduled reminders via platform push services.", "acceptance_criteria": ["A reminder arrives on a test device"], "depends_on": ["T3"], "requirement_ids": ["R4"], "suggested_agent": "mobile-engineer" }
+      ],
+      "required_approvals": [{ "gate": "plan", "description": "Approve scope and the health-data answers before work starts." }]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "coverage": [
+      { "topic": "offline logging (from notes)", "keywords": ["offline"] },
+      { "topic": "sync", "keywords": ["sync"] },
+      { "topic": "notifications", "keywords": ["notification", "reminder"] }
+    ],
+    "questions": [{ "topic": "health data", "keywords": ["health"] }]
+  }
+}

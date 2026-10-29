@@ -1,0 +1,20 @@
+{
+  "name": "invalid-model-output",
+  "description": "Truncated, non-JSON output must be rejected, never partially accepted.",
+  "input": {
+    "configuration": {
+      "name": "Maker Market",
+      "description": "A storefront for handmade goods",
+      "platform": "website",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": { "features": [], "custom": "" }
+    },
+    "notes": []
+  },
+  "candidate": {
+    "source": "hand-authored malformed output (simulates truncation)",
+    "output": "{\"summary\": \"A storefront\", \"requirements\": [{\"id\": \"R1\", \"statement\": \"Shoppers can bro"
+  },
+  "expect": { "valid": false, "problem_substrings": ["not valid JSON"] }
+}

@@ -1,0 +1,12 @@
+"""Use cases. Each public method is one transaction and raises `ApiError` for expected failures."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+Clock = Callable[[], datetime]
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)

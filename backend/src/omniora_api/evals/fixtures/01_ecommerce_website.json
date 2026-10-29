@@ -1,0 +1,57 @@
+{
+  "name": "ecommerce-website",
+  "description": "Fashion e-commerce site with a chosen stack; the plan must cover accounts, catalogue, checkout, admin, and the note about discount codes.",
+  "input": {
+    "configuration": {
+      "name": "Atelier Commerce",
+      "description": "Premium fashion e-commerce storefront with curated collections, cart, and checkout.",
+      "platform": "website",
+      "referenceUrl": "",
+      "stack": { "mode": "custom", "technologies": ["nextjs", "postgresql"] },
+      "requirements": { "features": ["authentication", "database", "payments", "admin-dashboard"], "custom": "" }
+    },
+    "notes": ["Support percentage and fixed-amount discount codes at checkout."]
+  },
+  "candidate": {
+    "source": "hand-authored reference plan (not model output)",
+    "output": {
+      "summary": "A Next.js storefront for curated fashion collections with accounts, a cart, hosted checkout, discount codes, and an admin dashboard for catalogue and order management.",
+      "requirements": [
+        { "id": "R1", "statement": "Shoppers can create an account and sign in.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R2", "statement": "Shoppers can browse collections and product detail pages.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R3", "statement": "Shoppers can add items to a cart and pay through a hosted payment checkout.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R4", "statement": "Shoppers can apply percentage or fixed-amount discount codes at checkout.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R5", "statement": "Staff can manage products, collections, discount codes, and orders in an admin dashboard.", "kind": "functional", "priority": "must", "source": "user" },
+        { "id": "R6", "statement": "Product pages are server-rendered for search engines.", "kind": "non-functional", "priority": "should", "source": "inferred" }
+      ],
+      "assumptions": ["Payments use a PCI-compliant hosted checkout so card data never touches our servers.", "A single currency at launch."],
+      "open_questions": [
+        { "id": "Q1", "question": "Which payment provider should checkout use?", "why_it_matters": "Determines the checkout integration and supported payment methods.", "blocking": true },
+        { "id": "Q2", "question": "Can discount codes be combined on one order?", "why_it_matters": "Changes discount validation rules and order totals.", "blocking": false }
+      ],
+      "recommended_stack": { "technologies": [], "rationale": "" },
+      "tasks": [
+        { "key": "T1", "title": "Data model and migrations", "description": "Users, products, collections, carts, orders, and discount codes in PostgreSQL.", "acceptance_criteria": ["Migrations apply cleanly", "Schema reviewed"], "depends_on": [], "requirement_ids": ["R1", "R2", "R3", "R4", "R5"], "suggested_agent": "database-engineer" },
+        { "key": "T2", "title": "Authentication", "description": "Account sign-up, sign-in, and sessions.", "acceptance_criteria": ["A shopper can register and sign in"], "depends_on": ["T1"], "requirement_ids": ["R1"], "suggested_agent": "backend-engineer" },
+        { "key": "T3", "title": "Catalogue pages", "description": "Server-rendered collection and product detail pages.", "acceptance_criteria": ["Pages render with seeded products", "Pages are indexable"], "depends_on": ["T1"], "requirement_ids": ["R2", "R6"], "suggested_agent": "frontend-engineer" },
+        { "key": "T4", "title": "Cart, checkout, and discount codes", "description": "Cart, discount code validation, and hosted payment checkout.", "acceptance_criteria": ["A test payment completes", "Invalid discount codes are rejected"], "depends_on": ["T2", "T3"], "requirement_ids": ["R3", "R4"], "suggested_agent": "backend-engineer" },
+        { "key": "T5", "title": "Admin dashboard", "description": "Manage products, collections, discount codes, and orders.", "acceptance_criteria": ["Staff can create a product and a discount code"], "depends_on": ["T2"], "requirement_ids": ["R5"], "suggested_agent": "frontend-engineer" },
+        { "key": "T6", "title": "End-to-end tests", "description": "Purchase flow and admin flows.", "acceptance_criteria": ["Checkout and admin journeys pass in CI"], "depends_on": ["T4", "T5"], "requirement_ids": ["R3", "R5"], "suggested_agent": "qa-debugging" }
+      ],
+      "required_approvals": [
+        { "gate": "plan", "description": "Approve scope before work starts." },
+        { "gate": "release", "description": "Approve before taking real payments." }
+      ]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "coverage": [
+      { "topic": "authentication", "keywords": ["sign in", "sign-in", "log in", "login", "authentication", "account"] },
+      { "topic": "payments", "keywords": ["payment", "checkout"] },
+      { "topic": "admin", "keywords": ["admin"] },
+      { "topic": "discount codes (from notes)", "keywords": ["discount"] }
+    ],
+    "questions": [{ "topic": "payment provider", "keywords": ["payment"] }]
+  }
+}

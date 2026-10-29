@@ -1,0 +1,32 @@
+{
+  "name": "cyclic-task-dependencies",
+  "description": "A shape-valid plan whose tasks depend on each other in a cycle (T1 -> T3 -> T2 -> T1) must be rejected.",
+  "input": {
+    "configuration": {
+      "name": "Maker Market",
+      "description": "A storefront for handmade goods",
+      "platform": "website",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": { "features": [], "custom": "" }
+    },
+    "notes": []
+  },
+  "candidate": {
+    "source": "hand-authored invalid plan",
+    "output": {
+      "summary": "A storefront for makers.",
+      "requirements": [{ "id": "R1", "statement": "Shoppers can buy products.", "kind": "functional", "priority": "must", "source": "user" }],
+      "assumptions": [],
+      "open_questions": [],
+      "recommended_stack": { "technologies": ["nextjs", "postgresql"], "rationale": "Server-rendered storefront with relational data." },
+      "tasks": [
+        { "key": "T1", "title": "Schema", "description": "Data model.", "acceptance_criteria": ["Reviewed"], "depends_on": ["T3"], "requirement_ids": ["R1"], "suggested_agent": "database-engineer" },
+        { "key": "T2", "title": "API", "description": "Endpoints.", "acceptance_criteria": ["Tested"], "depends_on": ["T1"], "requirement_ids": ["R1"], "suggested_agent": "backend-engineer" },
+        { "key": "T3", "title": "UI", "description": "Pages.", "acceptance_criteria": ["Renders"], "depends_on": ["T2"], "requirement_ids": ["R1"], "suggested_agent": "frontend-engineer" }
+      ],
+      "required_approvals": [{ "gate": "plan", "description": "Approve scope." }]
+    }
+  },
+  "expect": { "valid": false, "problem_substrings": ["cycle involving T1, T2, T3"] }
+}

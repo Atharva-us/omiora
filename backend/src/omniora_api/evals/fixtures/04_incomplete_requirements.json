@@ -1,0 +1,46 @@
+{
+  "name": "incomplete-requirements",
+  "description": "A vague brief; a good plan keeps scope minimal and raises blocking questions about users and core features instead of inventing a product.",
+  "input": {
+    "configuration": {
+      "name": "Business App",
+      "description": "An app for my business that customers can use.",
+      "platform": "both",
+      "referenceUrl": "",
+      "stack": { "mode": "recommend" },
+      "requirements": { "features": [], "custom": "" }
+    },
+    "notes": []
+  },
+  "candidate": {
+    "source": "hand-authored reference plan (not model output)",
+    "output": {
+      "summary": "The brief does not yet say what the business does or what customers need to do, so this plan limits itself to discovery and a minimal foundation until the questions are answered.",
+      "requirements": [
+        { "id": "R1", "statement": "Customers can reach the app on the web and on mobile.", "kind": "constraint", "priority": "must", "source": "user" },
+        { "id": "R2", "statement": "Core customer workflows are documented and agreed before feature work.", "kind": "constraint", "priority": "must", "source": "inferred" }
+      ],
+      "assumptions": ["No feature work starts until the blocking questions are answered."],
+      "open_questions": [
+        { "id": "Q1", "question": "What does the business do, and who are its customers?", "why_it_matters": "Without knowing the users, no feature set can be justified.", "blocking": true },
+        { "id": "Q2", "question": "What are the three most important things a customer must be able to do in the app?", "why_it_matters": "Defines the first version's core features.", "blocking": true },
+        { "id": "Q3", "question": "Do customers need accounts or payments?", "why_it_matters": "Determines authentication and billing scope.", "blocking": true }
+      ],
+      "recommended_stack": { "technologies": ["flutter", "fastapi", "postgresql"], "rationale": "One Flutter codebase covers web and mobile while scope is uncertain; FastAPI and PostgreSQL are a conventional backend. Revisit once features are known." },
+      "tasks": [
+        { "key": "T1", "title": "Requirements discovery", "description": "Run a structured discovery session and document customer workflows.", "acceptance_criteria": ["Workflows documented and approved"], "depends_on": [], "requirement_ids": ["R2"], "suggested_agent": "requirements-analyst" },
+        { "key": "T2", "title": "Platform skeleton", "description": "Empty Flutter app for web and mobile with CI.", "acceptance_criteria": ["App builds for web, iOS, and Android in CI"], "depends_on": ["T1"], "requirement_ids": ["R1"], "suggested_agent": "mobile-engineer" }
+      ],
+      "required_approvals": [{ "gate": "plan", "description": "Approve the discovery-first approach." }]
+    }
+  },
+  "expect": {
+    "valid": true,
+    "coverage": [{ "topic": "discovery first", "keywords": ["discovery"] }],
+    "questions": [
+      { "topic": "who the users are", "keywords": ["customer", "users", "who"] },
+      { "topic": "core features", "keywords": ["feature", "must be able to"] }
+    ],
+    "min_blocking_questions": 2
+  }
+}

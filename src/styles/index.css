@@ -1,0 +1,104 @@
+@import 'tailwindcss';
+
+/*
+ * Omniora design tokens.
+ * Colors follow the brand specification; status colors are tuned for
+ * WCAG AA contrast against the obsidian surfaces.
+ */
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  --color-obsidian: #080b12;
+  --color-surface: #0d111b;
+  --color-elevated: #121927;
+  --color-raised: #182133;
+  --color-line: #263244;
+  --color-line-soft: #1a2333;
+
+  --color-cyan: #16d9f5;
+  --color-cyan-soft: #0e8ea1;
+  --color-azure: #4385ff;
+
+  --color-ink: #f5faff;
+  --color-muted: #9ba8ba;
+  --color-faint: #6b788b;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  --shadow-panel: 0 1px 0 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px -16px rgb(0 0 0 / 0.6);
+
+  --animate-fade-in: fade-in 240ms ease-out both;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-obsidian font-sans text-ink antialiased;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+
+  ::selection {
+    background: rgb(22 217 245 / 0.28);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-cyan);
+    outline-offset: 2px;
+  }
+
+  [id] {
+    scroll-margin-top: 5rem;
+  }
+}
+
+@layer utilities {
+  /* Subtle engineering grid used behind hero/preview surfaces. */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, rgb(38 50 68 / 0.35) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(38 50 68 / 0.35) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
