@@ -216,13 +216,15 @@ def _approved_problems(plan: ProjectPlan, approved: ApprovedRequirements) -> tup
     problems: list[str] = []
     active = {r.id for r in approved.document.active()}
     deprecated = {r.id for r in approved.document.requirements} - active
+    restated = [r.id for r in plan.requirements if not DERIVED_ID.match(r.id)]
+    if restated:
+        problems.append(
+            f"requirements must not restate approved requirements ({', '.join(restated)}): leave them out and "
+            "reference their REQ- ids in tasks. The requirements list holds only your own additions, with ids "
+            "D1, D2, ... (it may be empty)."
+        )
     for requirement in plan.requirements:
-        if not DERIVED_ID.match(requirement.id):
-            problems.append(
-                f"Requirement {requirement.id!r}: approved requirements are referenced by their REQ- ids, never "
-                "restated; your own additions use ids D1, D2, ..."
-            )
-        elif requirement.source != "inferred":
+        if DERIVED_ID.match(requirement.id) and requirement.source != "inferred":
             problems.append(f"Derived requirement {requirement.id!r} must have source 'inferred'.")
     covered = {requirement_id for task in plan.tasks for requirement_id in task.requirement_ids}
     for task in plan.tasks:

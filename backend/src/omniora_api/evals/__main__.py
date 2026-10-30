@@ -39,6 +39,9 @@ def _attempt_summary(record) -> dict[str, Any]:
         "error_code": record.error_code,
         "error_message": record.error_message,
         "validation_errors": record.validation_errors[:10],
+        # For provider-rejected attempts: the model's own rejected output (Groq `failed_generation`), so a
+        # failure can be diagnosed from evidence. Written to the report file only, never printed.
+        "rejected_output": record.raw_output if record.outcome == "provider-error" else None,
     }
 
 
@@ -143,6 +146,7 @@ def main() -> int:
                 max_output_tokens=settings.planning_max_output_tokens,
                 effort=settings.planning_effort,
                 timeout_seconds=settings.model_timeout_seconds,
+                request_token_budget=settings.planning_request_token_budget,
             )
             # Grade the plan the production path accepted; if none was accepted, grade the last output.
             output = (

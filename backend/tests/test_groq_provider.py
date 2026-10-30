@@ -232,10 +232,23 @@ class TestAgentWithGroq:
         assert result.plan is not None and sleeps == [7]
 
         sleeps.clear()
-        always = ModelError("rate-limited", "limited", provider="groq", model="m", retry_after_seconds=500)
-        exhausted = self.run(ScriptedProvider(always, always, always), sleeps)
+        always = ModelError("rate-limited", "limited", provider="groq", model="m", retry_after_seconds=30)
+        provider = ScriptedProvider(*[always] * 6)
+        exhausted = self.run(provider, sleeps)
         assert exhausted.plan is None and exhausted.failure_code == "provider-unavailable"
-        assert sleeps == [60, 60]  # capped, and no pointless wait after the final attempt
+        # Three per-minute waits that do not use up model attempts, then the three bounded attempts,
+        # and no pointless wait after the final call.
+        assert len(provider.requests) == 6 and sleeps == [30] * 5
+
+    def test_a_limit_that_outlasts_the_wait_cap_stops_immediately(self) -> None:
+        # e.g. a daily quota: waiting 60 s and retrying would only be rejected again.
+        daily = ModelError("rate-limited", "limited", provider="groq", model="m", retry_after_seconds=3600)
+        sleeps: list[float] = []
+        provider = ScriptedProvider(daily, plan_json())
+        result = self.run(provider, sleeps)
+        assert result.plan is None and result.failure_code == "provider-rate-limited"
+        assert len(provider.requests) == 1 and sleeps == []
+        assert "3600" in (result.failure_message or "")
 
     def test_backoff_policy(self) -> None:
         assert backoff_seconds(model_error("rate-limited"), 1) == 2

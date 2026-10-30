@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     pm_effort: Effort | None = None
     pm_max_output_tokens: int | None = Field(default=None, ge=1024, le=64000)
     pm_max_attempts: int = Field(default=3, ge=1, le=5)
+    pm_request_token_budget: int | None = Field(default=None, ge=2048)
     # Requirements Analyst (Agent 2). It uses the same provider and model as planning.
     analyst_max_output_tokens: int | None = Field(default=None, ge=1024, le=64000)
     analyst_request_token_budget: int | None = Field(default=None, ge=2048)
@@ -151,6 +152,10 @@ class Settings(BaseSettings):
     @property
     def planning_max_output_tokens(self) -> int:
         return self.pm_max_output_tokens or PROVIDER_DEFAULTS[self.model_provider].max_output_tokens
+
+    @property
+    def planning_request_token_budget(self) -> int:
+        return self.pm_request_token_budget or PROVIDER_DEFAULTS[self.model_provider].request_token_budget
 
     @property
     def analyst_output_tokens(self) -> int:

@@ -176,7 +176,8 @@ class TestDiscoveryFlow:
         planner = ScriptedProvider(pinned_plan_json())
         assert make_worker(planner).run_once()
         content = planner.requests[0].user_content
-        assert f'sha256="{sha}"' in content and '"id": "REQ-002"' in content
+        assert f'sha256="{sha}"' in content and '"id":"REQ-002"' in content
+        assert '"evidence"' not in content.split("<approved_requirements")[1]  # compact: only what planning needs
         run_detail = client.get(f"/api/v1/runs/{run.json()['id']}").json()
         assert run_detail["run"]["state"] == "awaiting-approval"
         assert run_detail["requirements"] == {
@@ -588,6 +589,7 @@ class TestApproval:
                 ),
             ],
             questions=[],
+            readiness={"ready": True, "blockers": []},
         )
         provider = ScriptedProvider(update)
         assert make_worker(provider).run_once()

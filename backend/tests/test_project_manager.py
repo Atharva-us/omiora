@@ -144,6 +144,42 @@ class TestAttemptLoop:
         assert result.failure_code == "interrupted" and result.attempts == []
 
 
+def test_output_budget_shrinks_to_fit_the_request_budget_or_refuses() -> None:
+    cfg = ProjectConfiguration.model_validate(configuration())
+    provider = ScriptedProvider(plan_json())
+    result = run_project_manager(
+        provider,
+        PlanningInput(configuration=cfg, notes=[]),
+        max_attempts=1,
+        max_output_tokens=6000,
+        effort="medium",
+        timeout_seconds=30,
+        request_token_budget=7600,
+    )
+    assert result.plan is not None and 4000 <= provider.requests[0].max_output_tokens < 6000
+    unchanged = ScriptedProvider(plan_json())
+    run_project_manager(
+        unchanged,
+        PlanningInput(configuration=cfg, notes=[]),
+        max_attempts=1,
+        max_output_tokens=6000,
+        effort="medium",
+        timeout_seconds=30,
+    )
+    assert unchanged.requests[0].max_output_tokens == 6000
+    refused = ScriptedProvider()
+    tiny = run_project_manager(
+        refused,
+        PlanningInput(configuration=cfg, notes=[]),
+        max_attempts=1,
+        max_output_tokens=6000,
+        effort="medium",
+        timeout_seconds=30,
+        request_token_budget=4500,
+    )
+    assert tiny.failure_code == "context-too-large" and refused.requests == []
+
+
 def test_prompt_requires_tenant_isolation_for_shared_deployments() -> None:
     from omniora_api.agents.project_manager import SYSTEM_PROMPT
 

@@ -193,7 +193,7 @@ class TestEvidence:
             output(
                 operations=[requirement_op(source="answer", evidence=["answer:DQ-001"])],
                 questions=[],
-                readiness={"ready": False, "blockers": []},
+                readiness={"ready": True, "blockers": []},
             ),
             questions=(answered,),
         )
@@ -226,6 +226,7 @@ class TestEvidence:
                     requirement_op(statement="Shoppers can pay by card."),
                 ],
                 questions=[],
+                readiness={"ready": True, "blockers": []},
             ),
             questions=[asked(status="answered")],
         )
@@ -447,7 +448,7 @@ class TestPlanHandoff:
                 {"id": "REQ-001", "statement": "Browse.", "kind": "functional", "priority": "could", "source": "user"}
             ]
         )
-        assert any("never restated" in p for p in self.problems(restated))
+        assert any("must not restate approved requirements (REQ-001)" in p for p in self.problems(restated))
         candidate = self.pinned_plan()
         candidate.tasks[0].requirement_ids = ["REQ-001", "REQ-099", "REQ-003"]
         found = self.problems(candidate)
@@ -484,3 +485,101 @@ class TestPlanHandoff:
         assert any("At least one requirement" in p for p in plan_problems(empty, cfg))
         flagged = ProjectPlan.model_validate(plan(flagged_requirements=[{"id": "R1", "reason": "x"}]))
         assert any("only used when" in p for p in plan_problems(flagged, cfg))
+
+
+class TestQuestionSelectionAndBlocking:
+    """Regressions from the 2026-10-29 live Groq run: a vague brief that got only a tenancy question, and a
+    clear brief that was held back by a blocking deployment question."""
+
+    ready: ClassVar[dict] = {"ready": True, "blockers": []}
+    not_ready: ClassVar[dict] = {"ready": False, "blockers": []}
+    vague_context = staticmethod(lambda **o: analyst_context(personas=[], tenancy="unknown", scope="", **o))
+    guessed = staticmethod(lambda: requirement_op(source="inferred", confidence="low", evidence=[]))
+
+    def tenancy_question(self, **overrides):
+        return question(
+            prompt="Will separate companies share one deployment?",
+            kind="yes-no",
+            options=[],
+            topic="tenancy",
+            **overrides,
+        )
+
+    def test_vague_brief_cannot_be_reduced_to_a_tenancy_question(self) -> None:
+        only_tenancy = first_turn(
+            output(context=self.vague_context(), operations=[self.guessed()], questions=[self.tenancy_question()])
+        )
+        assert any("topic 'users'" in p for p in only_tenancy.problems)
+        assert any("topic 'scope'" in p for p in only_tenancy.problems)
+
+    def test_vague_brief_covering_users_scope_and_tenancy_is_accepted(self) -> None:
+        covered = first_turn(
+            output(
+                context=self.vague_context(),
+                operations=[self.guessed()],
+                questions=[
+                    question(prompt="Who will use the app?", kind="free-text", options=[], topic="users"),
+                    question(prompt="What must they be able to do first?", kind="free-text", options=[], topic="scope"),
+                    self.tenancy_question(),
+                ],
+            )
+        )
+        assert covered.problems == [] and not covered.document.readiness.ready
+
+    def test_unknown_platform_needs_a_platform_question(self) -> None:
+        result = first_turn(output(context=analyst_context(platform="unknown")))
+        assert any("topic 'platform'" in p for p in result.problems)
+
+    def test_clear_brief_with_no_blocking_gaps_declares_readiness(self) -> None:
+        ready = first_turn(output(questions=[question(blocking=False)], readiness=self.ready))
+        assert ready.problems == [] and ready.document.readiness.ready
+        held_back = first_turn(output(questions=[question(blocking=False)], readiness=self.not_ready))
+        assert any("Nothing blocks readiness" in p for p in held_back.problems)
+
+    @pytest.mark.parametrize("topic", ["deployment", "cost", "delivery"])
+    def test_optional_decisions_never_block(self, topic) -> None:
+        optional = question(prompt=f"A {topic} choice?", kind="yes-no", options=[], topic=topic)
+        blocking = first_turn(output(questions=[optional]))
+        assert any(f"a {topic} question cannot block readiness" in p for p in blocking.problems)
+        asked_optionally = first_turn(output(questions=[dict(optional, blocking=False)], readiness=self.ready))
+        assert asked_optionally.problems == [] and asked_optionally.document.readiness.ready
+
+    def test_platform_blocks_only_when_unknown(self) -> None:
+        platform_q = question(prompt="Web, mobile, or both?", topic="platform", options=["Web", "Mobile", "Both"])
+        known = first_turn(output(questions=[platform_q]))
+        assert any("platform is already known" in p for p in known.problems)
+        unknown = first_turn(output(context=analyst_context(platform="unknown"), questions=[platform_q]))
+        assert unknown.problems == [] and not unknown.document.readiness.ready
+
+    @pytest.mark.parametrize("topic", ["users", "scope", "tenancy", "security", "privacy", "data"])
+    def test_genuinely_necessary_unknowns_may_block(self, topic) -> None:
+        necessary = question(prompt=f"An essential {topic} question?", kind="yes-no", options=[], topic=topic)
+        result = first_turn(output(questions=[necessary], readiness=self.not_ready))
+        assert result.problems == [] and not result.document.readiness.ready
+        claims_ready = first_turn(output(questions=[necessary], readiness=self.ready))
+        assert any("is unanswered" in p for p in claims_ready.problems)
+
+
+class TestLiveOutputFormatRegressions:
+    """Formats Groq produced live on 2026-10-29 that carry no different meaning, and ones that do."""
+
+    def test_performance_is_a_question_topic(self) -> None:
+        load = question(
+            prompt="How many members at peak?", kind="free-text", options=[], topic="performance", blocking=False
+        )
+        assert first_turn(output(questions=[question(), load])).problems == []
+
+    def test_yes_no_with_exactly_yes_and_no_options_is_normalised(self) -> None:
+        restated = first_turn(
+            output(questions=[question(), question(prompt="Payments?", kind="yes-no", options=["Yes", "No"])])
+        )
+        assert restated.problems == [] and restated.questions[-1].options == ()
+        other = first_turn(output(questions=[question(prompt="Payments?", kind="yes-no", options=["Yes", "Maybe"])]))
+        assert any("take no options" in p for p in other.problems)
+
+    def test_placeholder_evidence_is_dropped_but_real_citations_are_still_checked(self) -> None:
+        placeholder = requirement_op(source="inferred", confidence="medium", evidence=["inferred"])
+        result = first_turn(output(operations=[requirement_op(), placeholder]))
+        assert result.problems == [] and result.document.requirements[1].evidence == []
+        invented = requirement_op(source="inferred", confidence="medium", evidence=["inferred", "answer:DQ-009"])
+        assert any("no answer to DQ-009" in p for p in first_turn(output(operations=[invented])).problems)

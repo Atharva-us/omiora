@@ -22,9 +22,27 @@ from ..domain.plans import ProjectPlan, plan_output_schema, plan_problems
 from ..domain.projects import TECHNOLOGIES, ProjectConfiguration
 from ..domain.requirements import ApprovedRequirements
 from ..llm.base import Effort, ModelError, ModelProvider, ModelRequest, ModelResponse
+from .budget import estimate_tokens
 
 RAW_OUTPUT_LIMIT = 64_000
 MAX_BACKOFF_SECONDS = 60.0
+MAX_FEEDBACK_ITEMS = 12  # validation problems fed back per retry; more only inflates the prompt
+MAX_RATE_LIMIT_WAITS = 3  # per call to an agent: bounded waits for per-minute provider limits
+# A plan needs room for hidden reasoning plus a complete JSON plan; below this, refuse rather than truncate.
+MIN_PLAN_OUTPUT_TOKENS = 4000
+
+
+def rate_limit_cannot_clear(error: ModelError, cap: float = MAX_BACKOFF_SECONDS) -> bool:
+    """True when the provider says the limit will outlast the longest wait we allow (for example a daily
+    quota). Waiting and retrying would only repeat the rejection, so the agent stops instead."""
+    return error.kind == "rate-limited" and error.retry_after_seconds is not None and error.retry_after_seconds > cap
+
+
+def rate_limit_message(error: ModelError) -> str:
+    return (
+        f"The model provider's rate limit will not clear for about {int(error.retry_after_seconds or 0)} seconds, "
+        "longer than this agent waits. Try again later."
+    )
 
 
 def backoff_seconds(error: ModelError, attempt: int, cap: float = MAX_BACKOFF_SECONDS) -> float:
@@ -146,15 +164,19 @@ def build_user_content(planning_input: PlanningInput, feedback: list[str] | None
         document = approved.document
         sections += [
             f'<approved_requirements version="{approved.version}" sha256="{approved.content_sha256}">',
+            # Compact, and only what planning needs: the per-request token budget is tight on some providers.
             json.dumps(
                 {
-                    "context": document.context.model_dump(mode="json"),
+                    "context": document.context.model_dump(mode="json", exclude={"deployment"}),
                     "requirements": [
-                        r.model_dump(mode="json", exclude={"deprecation_reason"}) for r in document.active()
+                        r.model_dump(
+                            mode="json", include={"id", "statement", "kind", "priority", "acceptance_criteria", "tags"}
+                        )
+                        for r in document.active()
                     ],
-                    "assumptions": [a.model_dump(mode="json") for a in document.assumptions],
+                    "assumptions": [a.statement for a in document.assumptions],
                 },
-                indent=2,
+                separators=(",", ":"),
             ),
             "</approved_requirements>",
         ]
@@ -173,7 +195,7 @@ def build_user_content(planning_input: PlanningInput, feedback: list[str] | None
         sections += [
             "<validation_errors>",
             "Your previous output was rejected for these reasons. Produce a corrected, complete plan:",
-            *[f"- {problem}" for problem in feedback],
+            *[f"- {problem}" for problem in feedback[:MAX_FEEDBACK_ITEMS]],
             "</validation_errors>",
         ]
     return "\n".join(sections)
@@ -206,27 +228,44 @@ def run_project_manager(
     max_output_tokens: int,
     effort: Effort,
     timeout_seconds: float,
+    request_token_budget: int | None = None,
     before_attempt: Callable[[int], bool] = lambda _: True,
     on_attempt: Callable[[AttemptRecord], None] = lambda _: None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> PlanningResult:
     """Runs up to `max_attempts` model calls. `before_attempt(n)` runs before each call and may
     return False to stop (lost lease, cancelled run); `on_attempt` persists each finished attempt.
-    Waits between attempts are bounded by `MAX_BACKOFF_SECONDS` each."""
+    Waits between attempts are bounded by `MAX_BACKOFF_SECONDS` each. With `request_token_budget`,
+    the output budget shrinks so the estimated request fits, down to `MIN_PLAN_OUTPUT_TOKENS`."""
     attempts: list[AttemptRecord] = []
     feedback: list[str] | None = None
     schema = plan_output_schema()
 
-    for number in range(1, max_attempts + 1):
+    number, limit, waits_left = 0, max_attempts, MAX_RATE_LIMIT_WAITS
+    while number < limit:
+        number += 1
         if not before_attempt(number):
             return PlanningResult(None, attempts, "interrupted", "Planning stopped before completion.")
         user_content = build_user_content(planning_input, feedback)
+        output_tokens = max_output_tokens
+        if request_token_budget is not None:
+            prompt_tokens = estimate_tokens(SYSTEM_PROMPT + user_content + json.dumps(schema))
+            output_tokens = min(max_output_tokens, request_token_budget - prompt_tokens)
+            if output_tokens < MIN_PLAN_OUTPUT_TOKENS:
+                return PlanningResult(
+                    None,
+                    attempts,
+                    "context-too-large",
+                    f"The brief, notes, and approved requirements (about {prompt_tokens} tokens) leave less than "
+                    f"{MIN_PLAN_OUTPUT_TOKENS} output tokens within the configured provider's per-request budget of "
+                    f"{request_token_budget} tokens.",
+                )
         prompt_sha = hashlib.sha256((SYSTEM_PROMPT + user_content).encode()).hexdigest()
         request = ModelRequest(
             system=SYSTEM_PROMPT,
             user_content=user_content,
             output_schema=schema,
-            max_output_tokens=max_output_tokens,
+            max_output_tokens=output_tokens,
             effort=effort,
             timeout_seconds=timeout_seconds,
         )
@@ -245,12 +284,27 @@ def run_project_manager(
                 error_message=error.message[:500],
                 raw_output=error.raw_output[:RAW_OUTPUT_LIMIT] if error.raw_output else None,
             )
+            if error.raw_output:
+                # The provider rejected the model's own output; our validator says what was wrong with it.
+                _, rejected = validate_output(
+                    error.raw_output, planning_input.configuration, planning_input.approved_requirements
+                )
+                record.validation_errors = rejected[:25]
+                feedback = rejected or feedback
             attempts.append(record)
             on_attempt(record)
+            if rate_limit_cannot_clear(error):
+                return PlanningResult(None, attempts, "provider-rate-limited", rate_limit_message(error))
+            if error.kind == "rate-limited" and waits_left > 0:
+                # A per-minute limit is not the model's fault: wait it out without using up a model attempt.
+                waits_left -= 1
+                limit += 1
+                sleep(backoff_seconds(error, number))
+                continue
             if not error.retryable:
                 return PlanningResult(None, attempts, f"provider-{error.kind}", error.message)
             wait = backoff_seconds(error, number)
-            if wait > 0 and number < max_attempts:
+            if wait > 0 and number < limit:
                 sleep(wait)
             continue
 

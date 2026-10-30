@@ -152,6 +152,7 @@ class PlanningJobHandler:
             max_output_tokens=self._settings.planning_max_output_tokens,
             effort=self._settings.planning_effort,
             timeout_seconds=self._settings.model_timeout_seconds,
+            request_token_budget=self._settings.planning_request_token_budget,
             before_attempt=before_attempt,
             on_attempt=on_attempt,
         )

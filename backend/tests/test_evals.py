@@ -96,7 +96,12 @@ def test_discovery_graders_fail_outputs_that_miss_expectations() -> None:
     invented["operations"] += [dict(invented["operations"][0], statement=f"Invented feature {n}.") for n in range(3)]
     invented["questions"] = []
     graded = grade_discovery(vague, json.dumps(invented))
-    assert graded.checks["active_requirements<=3"] is False and graded.checks["asks:users"] is False
+    # Dropping the questions about users and features is now rejected by the validator itself.
+    assert graded.checks == {"valid": False}
+    assert any("topic 'users'" in p for p in graded.problems)
+    invented["questions"] = json.loads(vague.candidate_output)["questions"]
+    still_invents = grade_discovery(vague, json.dumps(invented))
+    assert still_invents.checks["active_requirements<=3"] is False
 
     unknown = by_name["unknown-critical-answer"]
     as_fact = json.loads(unknown.candidate_output)
@@ -107,4 +112,8 @@ def test_discovery_graders_fail_outputs_that_miss_expectations() -> None:
     picked_a_side = json.loads(contradictory.candidate_output)
     picked_a_side["questions"] = []
     picked_a_side["readiness"] = {"ready": False, "blockers": []}
-    assert grade_discovery(contradictory, json.dumps(picked_a_side)).checks["blocking_questions>=1"] is False
+    unexplained = grade_discovery(contradictory, json.dumps(picked_a_side))  # "not ready" with nothing blocking
+    assert unexplained.checks == {"valid": False} and any("Nothing blocks readiness" in p for p in unexplained.problems)
+    picked_a_side["readiness"] = {"ready": True, "blockers": []}
+    graded = grade_discovery(contradictory, json.dumps(picked_a_side))
+    assert graded.checks["blocking_questions>=1"] is False and graded.checks["ready=False"] is False

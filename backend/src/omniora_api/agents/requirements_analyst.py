@@ -25,6 +25,7 @@ from ..domain.projects import ProjectConfiguration
 from ..domain.requirements import (
     BRIEF_FIELDS,
     MAX_QUESTIONS_PER_TURN,
+    QUESTION_TOPICS,
     TAGS,
     AnalystTurnOutput,
     QuestionState,
@@ -35,7 +36,19 @@ from ..domain.requirements import (
     evaluate_turn,
 )
 from ..llm.base import Effort, ModelError, ModelProvider, ModelRequest, ModelResponse
-from .project_manager import RAW_OUTPUT_LIMIT, AttemptRecord, backoff_seconds
+from .budget import estimate_tokens
+from .project_manager import (
+    MAX_FEEDBACK_ITEMS,
+    MAX_RATE_LIMIT_WAITS,
+    RAW_OUTPUT_LIMIT,
+    AttemptRecord,
+    backoff_seconds,
+    rate_limit_cannot_clear,
+    rate_limit_message,
+)
+
+# Live turns used 2.1K-4K completion tokens including hidden reasoning; below this, refuse rather than truncate.
+MIN_ANALYST_OUTPUT_TOKENS = 3000
 
 SYSTEM_PROMPT = f"""\
 You are the Requirements Analyst agent of Omniora, an AI software engineering platform. Your job is \
@@ -54,8 +67,7 @@ Return JSON matching the schema:
 - context: the complete current context. tenancy is "multi" when separate customers, \
 organisations, teams, or workspaces share one deployment and must not see each other's data; \
 "single" when they do not; "unknown" when the information does not say, and then you must ask a \
-blocking question with topic "tenancy" (in addition to, not instead of, the questions about users and \
-core features).
+blocking question with topic "tenancy".
 - operations: changes to the requirement list. "add" with id "" (the server assigns REQ ids); \
 "update" with an existing id and the complete new fields; "deprecate" with an existing id, a \
 reason, and the requirement's current values in the other fields. Never invent ids. Requirements \
@@ -71,29 +83,32 @@ something the user said.
 - When tenancy is "multi", keep an active "must" requirement tagged "tenant-isolation" whose \
 acceptance criteria prove that a member of one tenant cannot read or change another tenant's data.
 - questions: at most {MAX_QUESTIONS_PER_TURN}, only for gaps that materially change scope, \
-architecture, security, privacy, cost, or delivery; ask those first. Never repeat a question \
-listed in <questions>, and do not ask about what the brief or answers already settle. Give each a \
-short "why", a kind (single-choice or multiple-choice with 2-8 options, yes-no, or free-text with \
-no options; offer options where they help), blocking=true only if work should not start without \
-it, a topic, and relates_to with existing requirement ids only.
+architecture, security, privacy, cost, or delivery. Cover the most important unknowns across \
+categories rather than one: who the users are and what they must be able to do come first, then \
+platform, data, security and privacy, tenancy, and integrations. The server rejects a turn that \
+leaves the users or the core features unknown without a question about them. Never repeat a \
+question listed in <questions>, and do not ask about what the brief or answers already settle. Give \
+each a short "why", a kind (single-choice or multiple-choice with 2-8 options, yes-no, or free-text \
+with no options; offer options where they help), a topic (only these: {", ".join(QUESTION_TOPICS)}; \
+they differ from the tags), and relates_to with existing requirement \
+ids only.
+- blocking: true only when the answer is needed for a safe, useful requirements baseline (who the \
+users are, what they must do, tenancy, data, security, or privacy obligations). Deployment, hosting, \
+cost, and delivery choices never block (topics "deployment", "cost", "delivery"): ask them as \
+non-blocking questions or record an assumption. A platform question blocks only if the platform is \
+unknown. A clear brief may need no blocking questions at all; then declare readiness.
 - withdraw_questions: keys of open questions that are no longer relevant.
 - assumptions: choices you made where information is missing; basis lists the question keys they \
-stand in for. "I don't know" is never an answer: for such a question record a low-confidence \
+stand in for, and may cite only keys already listed in <questions> (questions you ask in this turn \
+have no key yet). "I don't know" is never an answer: for such a question record a low-confidence \
 assumption with its key in basis, or leave it open.
 - readiness: ready=true only when no blocking question is unanswered, every blocking "I don't \
 know" has a low-confidence assumption, tenancy is known, and at least one "must" requirement \
-exists. The server checks this and rejects a false claim. Otherwise list the blockers.
+exists. The server checks this and rejects a false claim either way: when nothing blocks, declare \
+ready=true. Otherwise list the blockers.
 - decisions: up to 10 short explanations of the important choices in this turn.
 If a revision request is present, address it.
 """
-
-# Characters per token. Against Groq's measured prompt counts for the evaluation fixtures this
-# over-estimates by roughly 15-20%, which is the safety margin for the per-request budget.
-TOKEN_ESTIMATE_DIVISOR = 3.5
-
-
-def estimate_tokens(text: str) -> int:
-    return int(len(text) / TOKEN_ESTIMATE_DIVISOR) + 1
 
 
 @dataclass(frozen=True)
@@ -167,7 +182,7 @@ def build_user_content(discovery: DiscoveryInput, feedback: list[str] | None = N
         sections += [
             "<validation_errors>",
             "Your previous output was rejected for these reasons. Produce a corrected, complete output:",
-            *[f"- {problem}" for problem in feedback],
+            *[f"- {problem}" for problem in feedback[:MAX_FEEDBACK_ITEMS]],
             "</validation_errors>",
         ]
     return "\n".join(sections)
@@ -217,30 +232,35 @@ def run_requirements_analyst(
     schema = analyst_output_schema()
     schema_tokens = estimate_tokens(json.dumps(schema))
 
-    for number in range(1, max_attempts + 1):
+    number, limit, waits_left = 0, max_attempts, MAX_RATE_LIMIT_WAITS
+    while number < limit:
+        number += 1
         if not before_attempt(number):
             return DiscoveryResult(None, None, attempts, "interrupted", "The turn stopped before completion.")
+        # Prefer the full summary, then the compact one; only then shrink the output budget, never below
+        # the floor (reasoning shares the output budget, so less would truncate the turn).
         user_content = build_user_content(discovery, feedback)
-        estimate = estimate_tokens(SYSTEM_PROMPT + user_content) + schema_tokens + max_output_tokens
-        if estimate > request_token_budget:
+        prompt_tokens = estimate_tokens(SYSTEM_PROMPT + user_content) + schema_tokens
+        if prompt_tokens + max_output_tokens > request_token_budget:
             user_content = build_user_content(discovery, feedback, compact=True)
-            estimate = estimate_tokens(SYSTEM_PROMPT + user_content) + schema_tokens + max_output_tokens
-        if estimate > request_token_budget:
+            prompt_tokens = estimate_tokens(SYSTEM_PROMPT + user_content) + schema_tokens
+        output_tokens = min(max_output_tokens, request_token_budget - prompt_tokens)
+        if output_tokens < min(MIN_ANALYST_OUTPUT_TOKENS, max_output_tokens):
             return DiscoveryResult(
                 None,
                 None,
                 attempts,
                 "context-too-large",
-                f"This session's requirements and answers (about {estimate} tokens with the output budget) exceed "
-                f"the configured provider's per-request budget of {request_token_budget} tokens. Submit or "
-                "start a new session.",
+                f"This session's requirements and answers (about {prompt_tokens} tokens) leave too little room for "
+                f"the analyst's output within the configured provider's per-request budget of "
+                f"{request_token_budget} tokens. Submit the current version or start a new session.",
             )
         prompt_sha = hashlib.sha256((SYSTEM_PROMPT + user_content).encode()).hexdigest()
         request = ModelRequest(
             system=SYSTEM_PROMPT,
             user_content=user_content,
             output_schema=schema,
-            max_output_tokens=max_output_tokens,
+            max_output_tokens=output_tokens,
             effort=effort,
             timeout_seconds=timeout_seconds,
         )
@@ -266,10 +286,18 @@ def run_requirements_analyst(
                 feedback = rejected or feedback
             attempts.append(record)
             on_attempt(record)
+            if rate_limit_cannot_clear(error):
+                return DiscoveryResult(None, None, attempts, "provider-rate-limited", rate_limit_message(error))
+            if error.kind == "rate-limited" and waits_left > 0:
+                # A per-minute limit is not the model's fault: wait it out without using up a model attempt.
+                waits_left -= 1
+                limit += 1
+                sleep(backoff_seconds(error, number))
+                continue
             if not error.retryable:
                 return DiscoveryResult(None, None, attempts, f"provider-{error.kind}", error.message)
             wait = backoff_seconds(error, number)
-            if wait > 0 and number < max_attempts:
+            if wait > 0 and number < limit:
                 sleep(wait)
             continue
 

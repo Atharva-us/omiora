@@ -56,7 +56,8 @@ All settings are environment variables, validated at startup by `omniora_api/con
 | `OMNIORA_MODEL_PROVIDER` | `anthropic` | `anthropic` or `groq`. Chosen explicitly: a key for another provider never switches providers. |
 | `ANTHROPIC_API_KEY` / `GROQ_API_KEY` | none | Server-side only; only the selected provider's key is read. Without it, starting a planning run or a requirements session returns 503 `provider-not-configured`. |
 | `OMNIORA_PM_MODEL` / `OMNIORA_PM_EFFORT` / `OMNIORA_PM_MAX_OUTPUT_TOKENS` | per provider: anthropic `claude-opus-5-5` / `high` / `16000`; groq `openai/gpt-oss-120b` / `medium` / `6000` | Model, reasoning effort, and output budget for the Project Manager. Unset values use the provider defaults. |
-| `OMNIORA_PM_MAX_ATTEMPTS` | `3` | Model attempts per plan version (invalid output or transient errors each use one). |
+| `OMNIORA_PM_MAX_ATTEMPTS` | `3` | Model attempts per plan version (invalid output or transient errors each use one; up to three waits for a per-minute rate limit do not). |
+| `OMNIORA_PM_REQUEST_TOKEN_BUDGET` | per provider: anthropic `150000`; groq `7600` | The most one planning request may use. The output budget shrinks to fit (never below 4,000 tokens); below that the run fails with `context-too-large` instead of sending a request the provider would reject. |
 | `OMNIORA_ANALYST_MAX_OUTPUT_TOKENS` / `OMNIORA_ANALYST_REQUEST_TOKEN_BUDGET` | per provider: anthropic `8000` / `150000`; groq `5000` / `7600` | Requirements Analyst output budget, and the most one request may use (estimated prompt + schema + output). A turn whose prompt would not fit fails with `context-too-large` instead of calling the provider. The analyst uses the same provider, model, and effort as planning. |
 | `OMNIORA_ANALYST_MAX_ATTEMPTS` / `OMNIORA_ANALYST_MAX_TURNS` | `3` / `8` | Model attempts per discovery turn, and question turns per session (revision turns after "request changes" are not capped). |
 | `OMNIORA_ANALYST_TURNS_PER_USER_PER_HOUR` | `30` | Database-backed limit on analyst turns. |
@@ -253,11 +254,26 @@ the same turn.
 - Inferred requirements cannot have high confidence. An assumption that stands in for an "I don't know" answer
   must have low confidence.
 - Lowering or deprecating a "must" needs a reason and evidence from the user's answer.
-- No repeated questions; choice questions need 2–8 distinct options; none on the final turn.
+- No repeated questions; choice questions need 2–8 distinct options; none on the final turn. Two harmless live
+  formats are normalised, not rejected: a yes-no question listing exactly "yes" and "no", and the literal
+  evidence token `inferred` on an inferred requirement. Any other options or citations are still checked.
+- **Coverage:** while the users are unknown (no personas) or no must-have comes from the brief, a note, or an
+  answer, a question with topic `users` or `scope` must be open or answered, and an unknown platform needs a
+  `platform` question. So one mandated topic, such as tenancy, cannot crowd out the fundamentals.
+- **Blocking:** a question may block readiness only when its answer is needed for a safe, useful baseline.
+  Questions with topic `deployment`, `cost`, or `delivery` never block, and a `platform` question blocks only
+  when the platform is unknown.
 - **Tenancy:** `multi` requires an active "must" requirement tagged `tenant-isolation` with acceptance criteria;
   `unknown` requires an open blocking question with topic `tenancy`.
-- **Readiness** is recomputed: no unanswered blocking question, every blocking "I don't know" covered by a
-  low-confidence assumption, tenancy known, at least one must-have. A false `ready` claim is rejected.
+- **Readiness** is recomputed both ways: no unanswered blocking question, every blocking "I don't know" covered
+  by a low-confidence assumption, tenancy known, at least one must-have. A false `ready` claim is rejected, and so
+  is a "not ready" claim when nothing blocks.
+- **Request budget:** each turn sends the full summary if it fits the provider's per-request budget, then the
+  compact one, then shrinks the output budget (never below 3,000 tokens); only then does it fail with
+  `context-too-large`. Validation feedback is capped at 12 problems. Up to three waits for a per-minute rate limit
+  do not use up an attempt, so a turn makes at most six provider calls. A `retry-after` longer than the 60 s wait
+  cap (for example a daily quota) stops the turn at once with `provider-rate-limited`, because retrying would only
+  be rejected again; the same applies to planning.
 
 **Answers and approval.** Answers are append-only (the newest row is current) and validated against the question's
 kind. Each submission has an `Idempotency-Key`; a replay applies nothing. Answers cannot change while a turn is
@@ -318,9 +334,46 @@ round is a single sample.
   output tokens reported. Nine calls rejected by Groq reported no usage, although they consumed quota. Latency
   per call was 2 to 37 s. No rate-limit errors occurred. Cost is not reported, because pricing depends on the
   account's plan.
-- **Not run live:** the full API + worker + Groq path for discovery and planning from approved requirements. The
-  day's token allowance was nearly used up. That path is verified with the scripted provider, against real
-  PostgreSQL (`tests/test_requirements_api.py`) and in a real browser against the real API.
+- **Not run live in this round:** the full API + worker + Groq path. See the next section.
+
+#### Live results: diagnosis and production path, 2026-10-29 (Phase 3.1)
+
+Live checks are separate from the test suite. `scripts/live_requirements_check.py` drives the production
+path (authenticated API, worker with both handlers, the configured provider, PostgreSQL) for a multi-tenant
+brief, and prints each step. It never uses the scripted provider. Run it against a disposable database.
+
+**Multi-tenant schema failures: what the evidence shows.**
+
+- *Proven, earlier round:* output-token exhaustion. Groq's error said the output was "truncated to fit
+  max_completion_tokens"; gpt-oss's hidden reasoning shares that budget.
+- *Proven, this round:* the remaining Groq rejections (`json_validate_failed`) were complete, well-formed
+  outputs whose question `topic` was outside the enum. Every one used `"performance"`; the model wanted to ask
+  about load and scale, which had no topic. Groq kept the rejected generation, so our validator could say why.
+- *Not the cause:* schema compatibility. Three probes with `strict: true` enforced enums, both in a small
+  schema and in the full analyst schema (asked for an invalid tag, the model returned a valid one). Groq's strict
+  mode is therefore enforced on some requests but not others for this model. That is a provider- and
+  model-side inconsistency, so a separate wire schema was not warranted.
+- *Fixes:* `performance` is now a question topic. The prompt lists the allowed topics and tags. Rejected
+  generations are validated and fed back. Rate-limit waits do not use up attempts. The planner's request is
+  compacted and fitted to the budget.
+
+**Production path (three live runs of the script).**
+
+| Run | Reached | Stopped at |
+| --- | --- | --- |
+| 1 | turn 1 accepted on attempt 3 (tenancy `multi`, `tenant-isolation` must-have), answers submitted | turn 2 `context-too-large`: the fixed 5,000-token output budget did not fit. Fixed: the output now shrinks to fit. |
+| 2 | turn 1 (after one retry, which a rate limit made necessary) and turn 2 accepted; v2 ready, submitted, approved; planning run pinned to v2 | planning: attempt 1 rejected by Groq; attempt 2 restated approved ids (rejected by the validator); attempt 3 refused as `context-too-large` because the long feedback inflated the prompt. Fixed: one combined restated-id message, feedback capped, planner prompt compacted. |
+| 3 | turn 1 failed validation 3 times (placeholder evidence `inferred`, yes-no options `["Yes","No"]`, topic `performance`); the retry hit 5 rate limits, then one more topic rejection | stopped deliberately to protect the day's quota. Fixed: all three formats (see the rules above). |
+
+So on real Groq, discovery reached an approved, multi-tenant requirements version, and a planning run was pinned
+to it. **No plan has yet been accepted live from approved requirements.** The fixes made after runs 2 and 3
+(planner feedback, budget, topics, normalisation) are covered by deterministic tests only and have not been
+re-verified live.
+
+**Usage.** Groq exposes per-minute limits (8,000 tokens, 1,000 requests) in response headers, but no daily-token
+figure, so the remaining daily allowance could not be measured. Three probes, one evaluation scenario, and three
+script runs reported 27.7K input and 34.4K output tokens. Groq-rejected and rate-limited calls report no usage,
+although rejected ones consume quota.
 
 ## Security boundaries
 
@@ -349,9 +402,10 @@ round is a single sample.
   signatures and a fake client.
 - **Plan quality is good, not perfect:** in the latest live round, 4/5 evaluation fixtures pass every check. Read
   the plan before approving it; the approval gate exists for this reason.
-- **Requirements Analyst is not yet reliable live:** 2/5 evaluation fixtures pass on Groq, and the multi-tenant
-  fixture has not produced an accepted output (see Requirements Analyst evaluation). Review the questions and
-  requirements before approving; the approval gate exists for this reason.
+- **Requirements Analyst is not yet reliable live:** on Groq's Developer tier, turns often need several attempts,
+  and the per-minute limit (about one request per minute at these sizes) makes retries slow. No plan from
+  approved requirements has been accepted live yet. Review the questions and requirements before approving; the
+  approval gate exists for this reason.
 - **Requirements Analyst limits.** The validator checks structure and evidence, not meaning: it cannot tell
   whether a question is a paraphrase of one already answered (only exact repeats are rejected), or whether a
   tenant-isolation criterion really proves denial (the evaluation grader checks that wording; the validator only

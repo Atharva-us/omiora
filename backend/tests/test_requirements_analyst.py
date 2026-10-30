@@ -54,6 +54,15 @@ def test_rate_limit_waits_for_retry_after_then_succeeds() -> None:
     assert [a.outcome for a in result.attempts] == ["provider-error", "succeeded"]
 
 
+def test_a_limit_that_outlasts_the_wait_cap_stops_the_turn_immediately() -> None:
+    daily = ModelError("rate-limited", "Quota.", provider="scripted", model="m", retry_after_seconds=3600)
+    waits: list[float] = []
+    provider = ScriptedProvider(daily, analyst_json())
+    result = run(provider, discovery(), sleep=waits.append)
+    assert result.turn is None and result.failure_code == "provider-rate-limited"
+    assert len(provider.requests) == 1 and waits == []
+
+
 def test_a_provider_rejected_output_is_validated_and_explained_on_the_next_attempt() -> None:
     rejected = ModelError(
         "invalid-output",
@@ -80,6 +89,23 @@ def test_never_marks_a_failed_provider_call_as_a_turn() -> None:
     down = ModelError("unavailable", "Overloaded.", provider="scripted", model="m")
     result = run(ScriptedProvider(down, down, down), discovery(), sleep=lambda _: None)
     assert result.turn is None and result.failure_code == "provider-unavailable"
+
+
+def test_output_budget_shrinks_to_fit_before_refusing() -> None:
+    provider = ScriptedProvider(analyst_json())
+    result = run(provider, discovery(), request_token_budget=6000, max_output_tokens=5000)
+    sent = provider.requests[0].max_output_tokens
+    assert result.turn is not None and 3000 <= sent < 5000  # shrunk to fit, above the floor
+    refused = ScriptedProvider()
+    tiny = run(refused, discovery(), request_token_budget=4000, max_output_tokens=5000)
+    assert tiny.failure_code == "context-too-large" and refused.requests == []
+
+
+def test_prompt_lists_question_topics_separately_from_tags() -> None:
+    from omniora_api.agents.requirements_analyst import SYSTEM_PROMPT as prompt
+
+    assert "a topic (only these: scope, users, tenancy" in " ".join(prompt.split())
+    assert "they differ from the tags" in prompt
 
 
 def test_compact_summary_is_used_when_the_full_one_would_not_fit() -> None:

@@ -10,6 +10,11 @@ Authority rules, enforced here rather than trusted to the prompt:
   field, or a note. An "I don't know" answer is never evidence for a fact.
 - Readiness is recomputed: a `ready` claim is rejected unless every rule holds.
 - A multi-tenant product must carry an active "must" requirement tagged `tenant-isolation`.
+- Discovery covers the fundamentals: while the users or the core features are unknown, a question
+  about them must be open or answered, so no single topic (such as tenancy) crowds them out.
+- A question may block readiness only when its answer is needed for a safe, useful baseline.
+  Deployment, cost, and delivery choices never block, and neither does a platform question when the
+  platform is known. A "not ready" claim must be explained by something that actually blocks.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = 1
 MAX_QUESTIONS_PER_TURN = 5
@@ -49,8 +54,23 @@ Tenancy = Literal["single", "multi", "unknown"]
 ContextPlatform = Literal["website", "mobile", "both", "unknown"]
 QuestionKind = Literal["single-choice", "multiple-choice", "free-text", "yes-no"]
 QuestionTopic = Literal[
-    "scope", "users", "tenancy", "security", "privacy", "data", "integrations", "platform", "cost", "delivery", "other"
+    "scope",
+    "users",
+    "tenancy",
+    "security",
+    "privacy",
+    "data",
+    "integrations",
+    "platform",
+    "performance",
+    "deployment",
+    "cost",
+    "delivery",
+    "other",
 ]
+QUESTION_TOPICS: tuple[str, ...] = QuestionTopic.__args__  # type: ignore[attr-defined]
+# Decisions that can be assumed or settled later without making the requirements unsafe or unusable.
+NON_BLOCKING_TOPICS = frozenset({"deployment", "cost", "delivery"})
 QuestionStatus = Literal["open", "answered", "withdrawn"]
 
 
@@ -148,6 +168,14 @@ class RequirementOperation(_Strict):
     tags: list[Tag] = Field(max_length=6)
     reason: str = Field(max_length=300)  # required to deprecate, or to lower a "must"
 
+    @model_validator(mode="after")
+    def _drop_placeholder_evidence(self) -> RequirementOperation:
+        # Seen live: inferred requirements citing the literal word "inferred". It is a placeholder, not a
+        # citation; the requirement stays marked inferred. Real citations are checked in full elsewhere.
+        if self.source == "inferred":
+            self.evidence = [ref for ref in self.evidence if ref.strip().lower() != "inferred"]
+        return self
+
 
 class ProposedQuestion(_Strict):
     prompt: str = Field(min_length=1, max_length=300)
@@ -157,6 +185,14 @@ class ProposedQuestion(_Strict):
     blocking: bool
     topic: QuestionTopic
     relates_to: list[str] = Field(max_length=5)
+
+    @model_validator(mode="after")
+    def _yes_no_takes_no_options(self) -> ProposedQuestion:
+        # Seen live: yes-no questions listing exactly ["Yes", "No"]. That restates the kind, so it is dropped;
+        # any other options on a yes-no question are still rejected.
+        if self.kind == "yes-no" and sorted(o.strip().lower() for o in self.options) == ["no", "yes"]:
+            self.options = []
+        return self
 
 
 class AnalystTurnOutput(_Strict):
@@ -391,6 +427,16 @@ def _question_problems(output: AnalystTurnOutput, context: TurnContext, question
         for ref in question.relates_to:
             if ref not in requirement_ids:
                 problems.append(f"{where}: relates_to names unknown requirement {ref!r}.")
+        if question.blocking and question.topic in NON_BLOCKING_TOPICS:
+            problems.append(
+                f"{where}: a {question.topic} question cannot block readiness; ask it as non-blocking or record an "
+                "assumption."
+            )
+        if question.blocking and question.topic == "platform" and output.context.platform != "unknown":
+            problems.append(
+                f"{where}: the platform is already known ({output.context.platform}), so a platform question cannot "
+                "block readiness."
+            )
     for key in output.withdraw_questions:
         question = questions.get(key)
         if question is None or question.status != "open":
@@ -524,6 +570,23 @@ def open_question_snapshot(questions: tuple[QuestionState, ...]) -> list[OpenQue
     ]
 
 
+def coverage_problems(document: RequirementsDocument, questions: tuple[QuestionState, ...]) -> list[str]:
+    """Fundamental unknowns that need a question (open or answered) before discovery can move on."""
+    asked = {q.topic for q in questions if q.status != "withdrawn"}
+    problems: list[str] = []
+    if not document.context.personas and "users" not in asked:
+        problems.append("Who the users are is unknown: ask a question with topic 'users'.")
+    user_backed_must = any(r.priority == "must" and r.source != "inferred" for r in document.active())
+    if not user_backed_must and "scope" not in asked:
+        problems.append(
+            "No must-have requirement comes from the brief, a note, or an answer yet: ask what the users must be "
+            "able to do (topic 'scope')."
+        )
+    if document.context.platform == "unknown" and "platform" not in asked:
+        problems.append("The platform is unknown: ask a question with topic 'platform'.")
+    return problems
+
+
 @dataclass(frozen=True)
 class TurnResult:
     document: RequirementsDocument | None
@@ -550,9 +613,16 @@ def evaluate_turn(output: AnalystTurnOutput, context: TurnContext, first_questio
         decisions=output.decisions,
     )
     problems = document_problems(draft)
+    if not context.final_turn:
+        problems += coverage_problems(draft, after)
     blockers = readiness_blockers(draft, after)
     if output.readiness.ready and blockers:
         problems += [f"Discovery is not ready: {blocker}" for blocker in blockers]
+    if not output.readiness.ready and not blockers:
+        problems.append(
+            "Nothing blocks readiness: there is no unanswered blocking question and every rule holds. Declare "
+            "ready=true, or mark a question blocking only if its answer is needed for a safe, useful baseline."
+        )
     if problems:
         return TurnResult(None, context.questions, problems)
 
